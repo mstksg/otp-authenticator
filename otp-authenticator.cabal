@@ -21,6 +21,7 @@ library
                      , time
                      , base32-bytestring
                      , bytestring
+                     , cryptonite
                      , text
                      , binary
                      , h-gpgme
