@@ -1,8 +1,10 @@
+{-# LANGUAGE DeriveFunctor       #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
@@ -17,6 +19,7 @@ module Authenticator (
   ) where
 
 import           Crypto.Hash.Algorithms
+import           Data.Bifunctor
 import           Data.Dependent.Sum
 import           Data.Functor.Identity
 import           Data.Kind
@@ -96,9 +99,6 @@ instance B.Binary (DSum Sing (Secret :&: ModeState)) where
         B.put ms
 
 data Store = Store { storeList :: [DSum Sing (Secret :&: ModeState)] }
--- data Store = Store { storeHOTP :: [(Secret 'HOTP, Integer)]
---                    , storeTOTP :: [Secret 'TOTP]
---                    }
   deriving Generic
 
 instance B.Binary Store
@@ -114,5 +114,33 @@ totp Sec{..} t = hashAlgo secAlgo >>~ \(I a) ->
 
 otp :: forall m. SingI m => Secret m -> ModeState m -> IO (Word32, ModeState m)
 otp = case sing @_ @m of
-    SHOTP -> \s ms -> return $ hotp s ms
-    STOTP -> \s ms -> ((, ms) . totp s) <$> getCurrentTime
+    SHOTP -> \sc ms -> return $ hotp sc ms
+    STOTP -> \sc ms -> (, ms) . totp sc <$> getCurrentTime
+
+someotp :: DSum Sing (Secret :&: ModeState) -> IO (Word32, DSum Sing (Secret :&: ModeState))
+someotp = getComp . someSecret (\s -> Comp . otp s)
+
+someSecret
+    :: Functor f
+    => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m))
+    -> DSum Sing (Secret :&: ModeState)
+    -> f (DSum Sing (Secret :&: ModeState))
+someSecret f = \case
+    s :=> (sc :&: ms) -> withSingI s $ ((s :=>) . (sc :&:)) <$> f sc ms
+
+deriving instance (Functor f, Functor g) => Functor (f :.: g)
+
+storeSecrets
+    :: Applicative f
+    => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m))
+    -> Store
+    -> f Store
+storeSecrets f = (_Store . traverse) (someSecret f)
+
+_Store
+    :: Functor f
+    => ([DSum Sing (Secret :&: ModeState)] -> f [DSum Sing (Secret :&: ModeState)])
+    -> Store
+    -> f Store
+_Store f s = Store <$> f (storeList s)
+
