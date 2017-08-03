@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,31 +17,44 @@
 {-# LANGUAGE TypeOperators       #-}
 
 module Authenticator (
+    Mode(..)
+  , Sing(SHOTP, STOTP)
+  , HashAlgo(..)
+  , parseAlgo
+  , Secret(..)
+  , Store(..)
+  , _Store
+  , hotp
+  , totp
+  , totp_
+  , otp
+  , someotp
+  , someSecret
+  , storeSecrets
+  , initState
+  , describeSecret
   ) where
 
 import           Crypto.Hash.Algorithms
-import           Data.Bifunctor
+import           Data.Bitraversable
+import           Data.Char
 import           Data.Dependent.Sum
-import           Data.Functor.Identity
 import           Data.Kind
+import           Data.Semigroup
 import           Data.Singletons
 import           Data.Singletons.TH
-import           Data.Text
 import           Data.Time.Clock
 import           Data.Type.Combinator
 import           Data.Type.Conjunction
-import           Data.Type.Equality
 import           Data.Word
-import           GHC.Generics           (Generic)
+import           GHC.Generics              (Generic)
 import           Type.Class.Higher
 import           Type.Class.Witness
-import           Type.Reflection
-import qualified Crypto.Gpgme           as GPG
-import qualified Data.Binary            as B
-import qualified Data.ByteString        as BS
-import qualified Data.ByteString.Base32 as B32
-import qualified Data.OTP               as OTP
-import qualified Data.Text              as T
+import qualified Crypto.Gpgme              as GPG
+import qualified Data.Binary               as B
+import qualified Data.ByteString           as BS
+import qualified Data.OTP                  as OTP
+import qualified Data.Text                 as T
 
 $(singletons [d|
   data Mode = HOTP | TOTP
@@ -55,8 +69,8 @@ data instance ModeState 'HOTP = HOTPState Word64
 data instance ModeState 'TOTP = TOTPState
   deriving Generic
 
-instance B.Binary (ModeState HOTP)
-instance B.Binary (ModeState TOTP)
+instance B.Binary (ModeState 'HOTP)
+instance B.Binary (ModeState 'TOTP)
 
 modeStateBinary :: Sing m -> Wit1 B.Binary (ModeState m)
 modeStateBinary = \case
@@ -73,6 +87,14 @@ hashAlgo HASHA1   = SomeC (I SHA1  )
 hashAlgo HASHA256 = SomeC (I SHA256)
 hashAlgo HASHA512 = SomeC (I SHA512)
 
+parseAlgo :: String -> Maybe HashAlgo
+parseAlgo = (`lookup` algos) . map toLower . unwords . words
+  where
+    algos = [("sha1", HASHA1)
+            ,("sha256", HASHA256)
+            ,("sha512", HASHA512)
+            ]
+
 data Secret :: Mode -> Type where
     Sec :: { secAccount :: T.Text
            , secIssuer  :: Maybe T.Text
@@ -84,6 +106,11 @@ data Secret :: Mode -> Type where
   deriving Generic
 
 instance B.Binary (Secret m)
+
+describeSecret :: Secret m -> T.Text
+describeSecret s = secAccount s <> case secIssuer s of
+                                     Nothing -> ""
+                                     Just i  -> " / " <> i
 
 instance B.Binary (DSum Sing (Secret :&: ModeState)) where
     get = do
@@ -103,19 +130,27 @@ data Store = Store { storeList :: [DSum Sing (Secret :&: ModeState)] }
 
 instance B.Binary Store
 
+initState :: forall m. SingI m => ModeState m
+initState = case sing @_ @m of
+    SHOTP -> HOTPState 0
+    STOTP -> TOTPState
+
 hotp :: Secret 'HOTP -> ModeState 'HOTP -> (Word32, ModeState 'HOTP)
 hotp Sec{..} (HOTPState i) = (p, HOTPState (i + 1))
   where
     p = hashAlgo secAlgo >>~ \(I a) -> OTP.hotp a secKey i secDigits
 
-totp :: Secret 'TOTP -> UTCTime -> Word32
-totp Sec{..} t = hashAlgo secAlgo >>~ \(I a) ->
-    OTP.totp a secKey t 30 secDigits
+totp_ :: Secret 'TOTP -> UTCTime -> Word32
+totp_ Sec{..} t = hashAlgo secAlgo >>~ \(I a) ->
+    OTP.totp a secKey (30 `addUTCTime` t) 30 secDigits
+
+totp :: Secret 'TOTP -> IO Word32
+totp s = totp_ s <$> getCurrentTime
 
 otp :: forall m. SingI m => Secret m -> ModeState m -> IO (Word32, ModeState m)
 otp = case sing @_ @m of
-    SHOTP -> \sc ms -> return $ hotp sc ms
-    STOTP -> \sc ms -> (, ms) . totp sc <$> getCurrentTime
+    SHOTP -> curry $ return . uncurry hotp
+    STOTP -> curry $ bitraverse totp return
 
 someotp :: DSum Sing (Secret :&: ModeState) -> IO (Word32, DSum Sing (Secret :&: ModeState))
 someotp = getComp . someSecret (\s -> Comp . otp s)

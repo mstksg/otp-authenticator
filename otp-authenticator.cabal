@@ -30,18 +30,27 @@ library
                      , type-combinators
                      , dependent-sum
   default-language:    Haskell2010
+  ghc-options:         -Wall
 
 executable otp-authenticator
   hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
-                     , otp-authenticator
-                     , h-gpgme
+                     , base32string
                      , binary
                      , bytestring
+                     , cryptonite
+                     , dependent-sum
+                     , filepath
+                     , h-gpgme
+                     , microlens
+                     , optparse-applicative
+                     , otp-authenticator
+                     , singletons
                      , text
-                     , base32string
+                     , type-combinators
+                     , unix
   default-language:    Haskell2010
 
 test-suite otp-authenticator-test
