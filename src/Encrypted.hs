@@ -6,6 +6,7 @@ module Encrypted (
   , withEnc
   , overEnc
   , getEnc
+  , mkEnc
   ) where
 
 import           Data.Either
@@ -28,11 +29,11 @@ withEnc
     -> (a -> IO (b, a))
     -> Enc a
     -> IO (b, Enc a)
-withEnc c k f (Enc e) = do
-    Right x <- fmap (B.decode . BSL.fromStrict) <$> G.decryptVerify c e
+withEnc c k f e = do
+    x <- getEnc c e
     (o, y) <- f x
-    Right e' <- G.encryptSign c [k] G.NoFlag . BSL.toStrict . B.encode $ y
-    return (o, Enc e')
+    e' <- mkEnc c k y
+    return (o, e')
 
 overEnc
     :: B.Binary a
@@ -46,9 +47,18 @@ overEnc c k f = fmap snd . withEnc c k (fmap ((),) . f)
 getEnc
     :: B.Binary a
     => G.Ctx
-    -> G.Key
     -> Enc a
     -> IO a
-getEnc c k = fmap fst . withEnc c k (pure . join (,))
+getEnc c (Enc e) = do
+    Right x <- fmap (B.decode . BSL.fromStrict) <$> G.decryptVerify c e
+    return x
 
-  
+mkEnc
+    :: B.Binary a
+    => G.Ctx
+    -> G.Key
+    -> a
+    -> IO (Enc a)
+mkEnc c k x = do
+    Right e' <- G.encryptSign c [k] G.NoFlag . BSL.toStrict . B.encode $ x
+    return (Enc e')

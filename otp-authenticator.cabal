@@ -38,6 +38,7 @@ executable otp-authenticator
   build-depends:       base
                      , otp-authenticator
                      , h-gpgme
+                     , binary
                      , bytestring
                      , text
                      , base32string
