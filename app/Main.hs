@@ -9,13 +9,16 @@ import           Authenticator
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
+import           Control.Monad.Trans.State
+import           Control.Monad.Trans.Writer
 import           Data.Char
 import           Data.Dependent.Sum
 import           Data.Foldable
 import           Data.Functor
 import           Data.Maybe
-import           Data.Semigroup hiding     (option)
+import           Data.Semigroup hiding      (option)
 import           Data.Singletons
 import           Data.Traversable
 import           Data.Type.Conjunction
@@ -28,15 +31,16 @@ import           System.IO
 import           System.IO.Error
 import           System.Posix.User
 import           Text.Printf
-import qualified Crypto.Gpgme              as G
-import qualified Data.Base32String.Default as B32
-import qualified Data.Binary               as B
-import qualified Data.ByteString           as BS
-import qualified Data.Text                 as T
-import qualified Data.Text.Encoding        as T
+import qualified Crypto.Gpgme               as G
+import qualified Data.Base32String.Default  as B32
+import qualified Data.Binary                as B
+import qualified Data.ByteString            as BS
+import qualified Data.Text                  as T
+import qualified Data.Text.Encoding         as T
 
 data Cmd = Add Bool
          | View (Maybe T.Text) (Maybe T.Text)
+         | Gen Int
 
 data Opts = Opts { oFingerprint :: Maybe BS.ByteString
                  , oFile        :: Maybe FilePath
@@ -70,7 +74,10 @@ parseOpts = Opts <$> optional (
                                                       (progDesc "Add a thing")
                                                 )
                               <> command "view" (info (parseView <**> helper)
-                                                      (progDesc "View a thing")
+                                                      (progDesc "View the things")
+                                                )
+                              <> command "gen"  (info (parseGen <**> helper)
+                                                      (progDesc "Generate OTP for specific item # (use view to list items)")
                                                 )
                                )
   where
@@ -81,15 +88,18 @@ parseOpts = Opts <$> optional (
     parseView = View <$> optional (option str ( long "account"
                                              <> short 'a'
                                              <> metavar "NAME"
-                                             <> help "Filter by account"
+                                             <> help "Optional filter by account"
                                               )
                                   )
                      <*> optional (option str ( long "issuer"
                                              <> short 'i'
                                              <> metavar "SITE"
-                                             <> help "Filter by issuer"
+                                             <> help "Optional filter by issuer"
                                               )
                                   )
+    parseGen = Gen <$> argument auto ( metavar "NUM"
+                                    <> help "ID number of account"
+                                     )
 
 main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
@@ -122,16 +132,18 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
 
     e' <- case oCmd of
       View fAcc fIss -> getEnc ctx e >>= \st -> do
-        _ <- storeSecrets (\(sc :: Secret m) ms -> fmap (fromMaybe ms) . runMaybeT $ do
-            traverse_ guard ((== secAccount sc) <$> fAcc)
-            traverse_ guard ((==) <$> fIss <*> secIssuer sc)
-            liftIO $ case sing @_ @m of
-              SHOTP ->
-                printf "%s: \tCounter-based key\n" (describeSecret sc) $> ms
-              STOTP -> do
-                p <- totp sc
-                printf "%s: %d\n" (describeSecret sc) p
-                return ms
+        _ <- flip runStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
+            i <- state $ \x -> (x :: Int, x + 1)
+            fmap (fromMaybe ms) . runMaybeT $ do
+              traverse_ (guard . (== secAccount sc)) fAcc
+              traverse_ (guard . (== secIssuer sc) . Just) fIss
+              liftIO $ case sing @_ @m of
+                SHOTP ->
+                  printf "(%d) %s: \tCounter-based key\n" i (describeSecret sc) $> ms
+                STOTP -> do
+                  p <- totp sc
+                  printf "(%d) %s: %d\n" i (describeSecret sc) p
+                  return ms
           ) st
         return Nothing
       Add u -> case k of
@@ -151,6 +163,29 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           putStrLn "Added succesfully!"
           return $
             st & _Store %~ (++ [dsc])
+      Gen n -> getEnc ctx e >>= \st -> do
+        (new, (changed, found)) <- runWriterT . flip evalStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
+            i <- state $ \x -> (x :: Int, x + 1)
+            if n == i
+              then case sing @_ @m of
+                SHOTP -> do
+                  let (p, ms') = hotp sc ms
+                  liftIO $ printf "(%d) %s: %d\n" i (describeSecret sc) p
+                  lift $ ms' <$ tell (Any True, Any True)
+                STOTP -> do
+                  liftIO $ do
+                    p <- totp sc
+                    printf "(%d) %s: %d\n" i (describeSecret sc) p
+                  lift $ ms <$ tell (Any False, Any True)
+              else return ms
+          ) st
+        if getAny found
+          then if getAny changed
+                 then Just <$> mkEnc ctx undefined new
+                 else return Nothing
+          else do
+            printf "No item with ID %d found.\n" n
+            exitFailure
 
     traverse_ (B.encodeFile oFile') e'
 
