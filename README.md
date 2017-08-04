@@ -47,7 +47,7 @@ fingerprint: ABCDEF12
 vault: /home/robert/.otp-auth.vault
 ```
 
-Note that there is [currently a bug][b23bug] in *base32string* and some keys
+Note that there is [currently a bug][b32bug] in *base32string* and some keys
 will not be decoded properly.  Hopefully this will be fixed soon!
 
 [b32bug]: https://github.com/solatis/haskell-base32string/issues/1
