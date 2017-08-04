@@ -1,7 +1,9 @@
+{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 
@@ -25,6 +27,7 @@ import           Data.Traversable
 import           Data.Type.Conjunction
 import           Data.Witherable
 import           Encrypted
+import           GHC.Generics               (Generic)
 import           Lens.Micro
 import           Options.Applicative
 import           Prelude hiding             (filter)
@@ -37,6 +40,7 @@ import           Text.Printf
 import           Text.Read                  (readMaybe)
 import qualified Crypto.Gpgme               as G
 import qualified Data.Aeson                 as J
+import qualified Data.Aeson.Types           as J
 import qualified Data.Base32String.Default  as B32
 import qualified Data.Binary                as B
 import qualified Data.ByteString            as BS
@@ -56,10 +60,24 @@ data Cmd = Add Bool
          | Dump DumpType
 
 data Opts = Opts { oFingerprint :: Maybe BS.ByteString
-                 , oFile        :: Maybe FilePath
+                 , oVault       :: Maybe FilePath
+                 , oConfig      :: Maybe FilePath
                  , oGPG         :: FilePath
                  , oCmd         :: Cmd
                  }
+
+data Config = Conf { cFingerprint :: Maybe T.Text
+                   , cVault       :: Maybe FilePath
+                   }
+  deriving (Generic)
+
+confJsonOpts :: J.Options
+confJsonOpts = J.defaultOptions { J.fieldLabelModifier = J.camelTo2 '-' . drop 1 }
+instance J.FromJSON Config where
+    parseJSON  = J.genericParseJSON  confJsonOpts
+instance J.ToJSON Config where
+    toEncoding = J.genericToEncoding confJsonOpts
+    toJSON     = J.genericToJSON     confJsonOpts
 
 parseOpts :: Parser Opts
 parseOpts = Opts <$> optional (
@@ -69,12 +87,19 @@ parseOpts = Opts <$> optional (
                                  <> help "Fingerprint of key to use"
                                   )
                                  )
-                 <*> option (Just <$> str) ( long "file"
-                              <> short 'f'
+                 <*> option (Just <$> str) ( long "vault"
+                              <> short 'v'
                               <> metavar "PATH"
                               <> value Nothing
-                              <> showDefaultWith (const "~/.otp-authenticator")
+                              <> showDefaultWith (const "~/.otp-auth.vault")
                               <> help "Location of vault"
+                               )
+                 <*> option (Just <$> str) ( long "config"
+                              <> short 'c'
+                              <> metavar "PATH"
+                              <> value Nothing
+                              <> showDefaultWith (const "~/.otp-auth.yaml")
+                              <> help "Location of configuration file"
                                )
                  <*> strOption ( long "gnupg"
                               <> short 'g'
@@ -148,29 +173,62 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
                                <> progDesc "OTP Viewer"
                                <> header "otp-authenticator: authenticate me, cap'n"
                                 )
-    k <- for oFingerprint $ \fing -> do
+
+    oConfig' <- case oConfig of
+      Just fp -> return fp
+      Nothing -> do
+        ue <- getUserEntryForID =<< getEffectiveUserID
+        return $ homeDirectory ue </> ".otp-auth.yaml"
+
+    (Conf{..}, mkNewConf) <- do
+      (c0, mkNew) <- ((, False) . Y.decodeEither <$> BS.readFile oConfig') `catch` \e ->
+        if isDoesNotExistError e
+          then return (Right (Conf Nothing Nothing), True)
+          else throwIO e
+      case c0 of
+        Left e -> do
+          putStrLn "Could not parse configuration file.  Ignoring."
+          putStrLn e
+          return (Conf Nothing Nothing, False)
+        Right c1 -> return (c1, mkNew)
+
+    vault <- case oVault <|> cVault of
+      Just fp -> return fp
+      Nothing -> do
+        ue <- getUserEntryForID =<< getEffectiveUserID
+        return $ homeDirectory ue </> ".otp-auth.vault"
+
+
+    cFingerprint' <- if mkNewConf
+      then do
+        printf "Config file not found; generating default file at %s\n" oConfig'
+        fing <- case oFingerprint of
+          Just p  -> return $ Just (T.decodeUtf8 p)
+          Nothing -> mfilter (not . T.null) . Just . T.pack <$> query "Fingerprint?"
+        Y.encodeFile oConfig' $ Conf fing (Just vault)
+        return fing
+      else
+        return cFingerprint
+
+    let fingerprint = oFingerprint <|> (T.encodeUtf8 <$> cFingerprint')
+
+    k <- for fingerprint $ \fing -> do
       G.getKey ctx fing G.NoSecret >>= \case
         Nothing -> do
           printf "No key found for fingerprint %s!\n" (T.decodeUtf8 fing)
           exitFailure
         Just k' -> return k'
 
-    oFile' <- case oFile of
-      Just fp -> return fp
-      Nothing -> do
-        ue <- getUserEntryForID =<< getEffectiveUserID
-        return $ homeDirectory ue </> ".otp-authenticator"
-
-    e <- B.decodeFile @(Enc Store) oFile' `catch` \e ->
+    (e, mkNewVault) <- ((,False) <$> B.decodeFile @(Enc Store) vault) `catch` \e ->
       if isDoesNotExistError e
-        then case (,) <$> k <*> oFingerprint of
+        then case (,) <$> k <*> fingerprint of
           Nothing -> do
             putStrLn "No vault found; please try again with a fingerprint to create new vault."
             exitFailure
           Just (k', fing) -> do
             printf "No vault found; generating new vault with fingerprint %s ...\n" $
               T.decodeUtf8 fing
-            mkEnc ctx k' $ Store []
+            (,True) <$> mkEnc ctx k' (Store [])
         else throwIO e
 
     e' <- case oCmd of
@@ -205,7 +263,7 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           putStrLn "Adding a key requires a fingerprint."
           exitFailure
         Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
-          -- TODO: veriffy
+          -- TODO: verify b32?
           dsc <- if u
             then (parseSecretURI <$> query "URI Secret?") >>= \case
                     Left err -> do
@@ -219,25 +277,23 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           return $
             st & _Store %~ (++ [dsc])
       Gen n -> getEnc ctx e >>= \st -> do
-        res <- runMaybeT . runWriterT . flip evalStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
-            i <- state $ \x -> (x :: Int, x + 1)
-            if n == i
-              then case sing @_ @m of
-                SHOTP -> case k of
-                  Just k' -> do
-                    let (p, ms') = hotp sc ms
-                    liftIO $ printf "(%d) %s: %d\n" i (describeSecret sc) p
-                    lift $ ms' <$ tell (First (Just k'))
-                  Nothing -> liftIO $ do
-                    putStrLn "Generating a counter-based (HOTP) key requires a fingerprint."
-                    exitFailure
-                STOTP -> do
-                  liftIO $ do
-                    p <- totp sc
-                    printf "(%d) %s: %d\n" i (describeSecret sc) p
-                  empty
-              else return ms
-          ) st
+        res <- runMaybeT . runWriterT . forOf (_Store . ix (n - 1)) st $ \case
+          s :=> sc :&: ms -> 
+            case s of
+              SHOTP -> case k of
+                Just k' -> do
+                  let (p, ms') = hotp sc ms
+                  liftIO $ printf "(%d) %s: %d\n" n (describeSecret sc) p
+                  tell (First (Just k'))
+                  return $ s :=> sc :&: ms'
+                Nothing -> liftIO $ do
+                  putStrLn "Generating a counter-based (HOTP) key requires a fingerprint."
+                  exitFailure
+              STOTP -> do
+                liftIO $ do
+                  p <- totp sc
+                  printf "(%d) %s: %d\n" n (describeSecret sc) p
+                empty
         forM res $ \(r, changed) ->
           case getFirst changed of
             Just k' -> mkEnc ctx k' r
@@ -249,17 +305,13 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           putStrLn "Editing keys requires a fingerprint."
           exitFailure
         Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
-          (st', found) <- runWriterT . flip evalStateT 1 . forOf (_Store . traverse) st $ \case
-            ds@(s :=> sc :&: ms) -> do
-              i <- state $ \x -> (x :: Int, x + 1)
-              if n == i
-                then do
-                  sc' <- liftIO $ do
-                    printf "Editing (%d) %s ...\n" i (describeSecret sc)
-                    liftIO (editSecret sc)
-                  lift $ tell (First (Just (describeSecret sc')))
-                  return $ s :=> sc :&: ms
-                else return ds
+          (st', found) <- runWriterT . forOf (_Store . ix (n - 1)) st $ \case
+            (s :=> sc :&: ms) -> do
+              sc' <- liftIO $ do
+                printf "Editing (%d) %s ...\n" n (describeSecret sc)
+                liftIO (editSecret sc)
+              tell (First (Just (describeSecret sc')))
+              return $ s :=> sc' :&: ms
           case getFirst found of
             Nothing -> do
               printf "No item with ID %d found.\n" n
@@ -295,7 +347,10 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
             DTYaml -> Y.encode st
         return Nothing
 
-    traverse_ (B.encodeFile oFile') e'
+    case e' of
+      Just changed -> B.encodeFile vault changed
+      Nothing | mkNewVault -> B.encodeFile vault e
+              | otherwise  -> return ()
 
 mkSecret :: IO (DSum Sing (Secret :&: ModeState))
 mkSecret = do
@@ -322,8 +377,7 @@ mkSecret = do
                  Just r -> return r
                  Nothing -> putStrLn "Invalid initial counter.  Using 0." $> 0
         return $ SHOTP :=> s :&: HOTPState n' Nothing
-      't':_ -> return $ STOTP :=> s :&: TOTPState
-      _     -> error "Unknown type"
+      _ -> return $ STOTP :=> s :&: TOTPState
 
 editSecret :: Secret m -> IO (Secret m)
 editSecret sc = do
