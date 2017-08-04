@@ -245,9 +245,8 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
               liftIO $ if l
                 then printf "(%d) %s\n" i (describeSecret sc) $> ms
                 else case sing @_ @m of
-                  SHOTP -> ms <$ case hotpLast ms of
-                    Nothing -> printf "(%d) %s: [ counter-based, unitialized ]\n" i (describeSecret sc)
-                    Just p  -> printf "(%d) %s: %d **\n" i (describeSecret sc) p
+                  SHOTP -> ms <$
+                    printf "(%d) %s: [ counter-based, use gen ]\n" i (describeSecret sc)
                   STOTP -> do
                     p <- totp sc
                     printf "(%d) %s: %d\n" i (describeSecret sc) p
@@ -376,7 +375,7 @@ mkSecret = do
           else case readMaybe n of
                  Just r -> return r
                  Nothing -> putStrLn "Invalid initial counter.  Using 0." $> 0
-        return $ SHOTP :=> s :&: HOTPState n' Nothing
+        return $ SHOTP :=> s :&: HOTPState n'
       _ -> return $ STOTP :=> s :&: TOTPState
 
 editSecret :: Secret m -> IO (Secret m)

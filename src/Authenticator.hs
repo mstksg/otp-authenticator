@@ -82,7 +82,6 @@ instance J.ToJSON Mode where
 data family ModeState :: Mode -> Type
 data instance ModeState 'HOTP =
     HOTPState { hotpCounter :: Word64
-              , hotpLast    :: Maybe Word32
               }
   deriving (Generic, Show)
 data instance ModeState 'TOTP = TOTPState
@@ -92,10 +91,8 @@ instance B.Binary (ModeState 'HOTP)
 instance B.Binary (ModeState 'TOTP)
 instance J.ToJSON (ModeState 'HOTP) where
     toEncoding (HOTPState{..}) = J.pairs $ "counter" J..= hotpCounter
-                                        <> maybe mempty ("last" J..=) hotpLast
-    toJSON (HOTPState{..}) = J.object $
-      [ "counter" J..= hotpCounter
-      ] ++ maybe [] ((:[]) . ("last" J..=)) hotpLast
+    toJSON (HOTPState{..}) = J.object
+      [ "counter" J..= hotpCounter ]
 
 instance J.ToJSON (ModeState 'TOTP)
 
@@ -200,7 +197,7 @@ instance J.ToJSON Store where
     toJSON l     = J.object ["store" J..= storeList l]
 
 hotp :: Secret 'HOTP -> ModeState 'HOTP -> (Word32, ModeState 'HOTP)
-hotp Sec{..} (HOTPState i _) = (p, HOTPState (i + 1) (Just p))
+hotp Sec{..} (HOTPState i) = (p, HOTPState (i + 1))
   where
     p = hashAlgo secAlgo >>~ \(I a) -> OTP.hotp a secKey i secDigits
 
@@ -268,9 +265,9 @@ secretURI = do
     withSomeSing m $ \case
       SHOTP -> case M.lookup "counter" ps of
           Nothing -> fail "Paramater 'counter' required for hotp mode"
-          Just (T.unpack->c)  -> case readMaybe c of
+          Just (T.unpack->c) -> case readMaybe c of
             Nothing -> fail $ "Could not parse 'counter' parameter: " ++ c
-            Just c' -> return $ SHOTP :=> secr :&: HOTPState c' Nothing
+            Just c' -> return $ SHOTP :=> secr :&: HOTPState c'
       STOTP -> return $ STOTP :=> secr :&: TOTPState
   where
     b32s = ['A' .. 'Z'] ++ ['2'..'7']
