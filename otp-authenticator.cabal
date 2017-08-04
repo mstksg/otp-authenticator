@@ -18,28 +18,30 @@ library
   exposed-modules:     Authenticator
                        Encrypted
   build-depends:       base >= 4.7 && < 5
-                     , one-time-password
-                     , time
-                     , bytestring
-                     , cryptonite
-                     , uri-encode
-                     , containers
-                     , text
-                     , binary
-                     , h-gpgme
-                     , singletons
+                     , aeson
                      , base32string
-                     , type-combinators
+                     , binary
+                     , bytestring
+                     , containers
+                     , cryptonite
                      , dependent-sum
+                     , h-gpgme
+                     , one-time-password
+                     , singletons
+                     , text
+                     , time
                      , trifecta
+                     , type-combinators
+                     , uri-encode
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -fdiagnostics-color=always
 
 executable otp-auth
   hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall -fdiagnostics-color=always
   build-depends:       base
+                     , aeson
                      , base32string
                      , binary
                      , bytestring
@@ -54,8 +56,9 @@ executable otp-auth
                      , text
                      , transformers
                      , type-combinators
-                     , witherable
                      , unix
+                     , witherable
+                     , yaml
   default-language:    Haskell2010
 
 test-suite otp-authenticator-test

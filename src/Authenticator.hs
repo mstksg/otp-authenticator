@@ -59,6 +59,7 @@ import           GHC.Generics              (Generic)
 import           Text.Read                 (readMaybe)
 import           Type.Class.Higher
 import           Type.Class.Witness
+import qualified Data.Aeson                as J
 import qualified Data.Base32String.Default as B32
 import qualified Data.Binary               as B
 import qualified Data.ByteString           as BS
@@ -74,15 +75,29 @@ $(singletons [d|
   |])
 
 instance B.Binary Mode
+instance J.ToJSON Mode where
+    toJSON HOTP = J.toJSON @T.Text "hotp"
+    toJSON TOTP = J.toJSON @T.Text "totp"
 
 data family ModeState :: Mode -> Type
-data instance ModeState 'HOTP = HOTPState Word64
+data instance ModeState 'HOTP =
+    HOTPState { hotpCounter :: Word64
+              , hotpLast    :: Maybe Word32
+              }
   deriving (Generic, Show)
 data instance ModeState 'TOTP = TOTPState
   deriving (Generic, Show)
 
 instance B.Binary (ModeState 'HOTP)
 instance B.Binary (ModeState 'TOTP)
+instance J.ToJSON (ModeState 'HOTP) where
+    toEncoding (HOTPState{..}) = J.pairs $ "counter" J..= hotpCounter
+                                        <> maybe mempty ("last" J..=) hotpLast
+    toJSON (HOTPState{..}) = J.object $
+      [ "counter" J..= hotpCounter
+      ] ++ maybe [] ((:[]) . ("last" J..=)) hotpLast
+
+instance J.ToJSON (ModeState 'TOTP)
 
 modeStateBinary :: Sing m -> Wit1 B.Binary (ModeState m)
 modeStateBinary = \case
@@ -93,6 +108,10 @@ data HashAlgo = HASHA1 | HASHA256 | HASHA512
   deriving (Generic, Show)
 
 instance B.Binary HashAlgo
+instance J.ToJSON HashAlgo where
+    toJSON HASHA1   = J.toJSON @T.Text "sha1"
+    toJSON HASHA256 = J.toJSON @T.Text "sha256"
+    toJSON HASHA512 = J.toJSON @T.Text "sha512"
 
 hashAlgo :: HashAlgo -> SomeC HashAlgorithm I
 hashAlgo HASHA1   = SomeC (I SHA1  )
@@ -119,6 +138,26 @@ data Secret :: Mode -> Type where
   deriving (Generic, Show)
 
 instance B.Binary (Secret m)
+instance J.ToJSON (Secret m) where
+    toEncoding (Sec{..}) = J.pairs
+        ( "account"   J..= secAccount
+       <> maybe mempty ("issuer" J..=) secIssuer
+       <> "algorithm" J..= secAlgo
+       <> "digits"    J..= secDigits
+       <> "key"       J..= toText' (B32.fromBytes secKey)
+        )
+    toJSON (Sec{..}) = J.object $
+        [ "account"   J..= secAccount
+        , "algorithm" J..= secAlgo
+        , "digits"    J..= secDigits
+        , "key"       J..= toText' (B32.fromBytes secKey)
+        ] ++ maybe [] ((:[]) . ("issuer" J..=)) secIssuer
+
+toText' :: B32.Base32String -> T.Text
+toText' = T.unwords
+        . T.chunksOf 4
+        . T.map toLower
+        . B32.toText
 
 describeSecret :: Secret m -> T.Text
 describeSecret s = secAccount s <> case secIssuer s of
@@ -138,13 +177,30 @@ instance B.Binary (DSum Sing (Secret :&: ModeState)) where
         B.put sc
         B.put ms
 
+instance J.ToJSON (DSum Sing (Secret :&: ModeState)) where
+    toEncoding (s :=> sc :&: ms) = J.pairs
+        ( "type"   J..= fromSing s
+       <> "secret" J..= sc
+       <> (case s of SHOTP -> "state" J..= ms
+                     STOTP -> mempty
+          )
+        )
+    toJSON (s :=> sc :&: ms) = J.object $
+        [ "type"   J..= fromSing s
+        , "secret" J..= sc
+        ] ++ case s of SHOTP -> ["state" J..= ms]
+                       STOTP -> []
+
 data Store = Store { storeList :: [DSum Sing (Secret :&: ModeState)] }
   deriving Generic
 
 instance B.Binary Store
+instance J.ToJSON Store where
+    toEncoding l = J.pairs $ "store" J..= storeList l
+    toJSON l     = J.object ["store" J..= storeList l]
 
 hotp :: Secret 'HOTP -> ModeState 'HOTP -> (Word32, ModeState 'HOTP)
-hotp Sec{..} (HOTPState i) = (p, HOTPState (i + 1))
+hotp Sec{..} (HOTPState i _) = (p, HOTPState (i + 1) (Just p))
   where
     p = hashAlgo secAlgo >>~ \(I a) -> OTP.hotp a secKey i secDigits
 
@@ -214,7 +270,7 @@ secretURI = do
           Nothing -> fail "Paramater 'counter' required for hotp mode"
           Just (T.unpack->c)  -> case readMaybe c of
             Nothing -> fail $ "Could not parse 'counter' parameter: " ++ c
-            Just c' -> return $ SHOTP :=> secr :&: HOTPState c'
+            Just c' -> return $ SHOTP :=> secr :&: HOTPState c' Nothing
       STOTP -> return $ STOTP :=> secr :&: TOTPState
   where
     b32s = ['A' .. 'Z'] ++ ['2'..'7']

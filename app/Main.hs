@@ -27,25 +27,33 @@ import           Data.Witherable
 import           Encrypted
 import           Lens.Micro
 import           Options.Applicative
+import           Prelude hiding             (filter)
 import           System.Exit
-import           Prelude hiding (filter)
 import           System.FilePath
 import           System.IO
 import           System.IO.Error
 import           System.Posix.User
 import           Text.Printf
+import           Text.Read                  (readMaybe)
 import qualified Crypto.Gpgme               as G
+import qualified Data.Aeson                 as J
 import qualified Data.Base32String.Default  as B32
 import qualified Data.Binary                as B
 import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Lazy       as BSL
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
+import qualified Data.Text.IO               as T
+import qualified Data.Yaml                  as Y
+
+data DumpType = DTYaml | DTJSON
 
 data Cmd = Add Bool
          | View Bool (Either Int (Maybe T.Text, Maybe T.Text))
          | Gen Int
          | Edit Int
          | Delete Int
+         | Dump DumpType
 
 data Opts = Opts { oFingerprint :: Maybe BS.ByteString
                  , oFile        :: Maybe FilePath
@@ -90,6 +98,9 @@ parseOpts = Opts <$> optional (
                               <> command "delete" (info (parseDelete <**> helper)
                                                       (progDesc "Delete a thing")
                                                 )
+                              <> command "dump" (info (parseDump <**> helper)
+                                                      (progDesc "Dump all data as json")
+                                                )
                                )
   where
     parseAdd = Add <$> switch ( long "uri"
@@ -125,6 +136,10 @@ parseOpts = Opts <$> optional (
     parseDelete = Delete <$> argument auto ( metavar "ID"
                                       <> help "ID number of account"
                                        )
+    parseDump = Dump <$> flag DTJSON DTYaml ( long "yaml"
+                                           <> short 'y'
+                                           <> help "Yaml output"
+                                            )
 
 main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
@@ -134,8 +149,11 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
                                <> header "otp-authenticator: authenticate me, cap'n"
                                 )
     k <- for oFingerprint $ \fing -> do
-      Just k' <- G.getKey ctx fing G.NoSecret
-      return k'
+      G.getKey ctx fing G.NoSecret >>= \case
+        Nothing -> do
+          printf "No key found for fingerprint %s!\n" (T.decodeUtf8 fing)
+          exitFailure
+        Just k' -> return k'
 
     oFile' <- case oFile of
       Just fp -> return fp
@@ -169,8 +187,9 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
               liftIO $ if l
                 then printf "(%d) %s\n" i (describeSecret sc) $> ms
                 else case sing @_ @m of
-                  SHOTP ->
-                    printf "(%d) %s: [Counter-based key, view with gen]\n" i (describeSecret sc) $> ms
+                  SHOTP -> ms <$ case hotpLast ms of
+                    Nothing -> printf "(%d) %s: [ counter-based, unitialized ]\n" i (describeSecret sc)
+                    Just p  -> printf "(%d) %s: %d **\n" i (describeSecret sc) p
                   STOTP -> do
                     p <- totp sc
                     printf "(%d) %s: %d\n" i (describeSecret sc) p
@@ -258,7 +277,7 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
               i <- state $ \x -> (x :: Int, x + 1)
               if n == i
                 then do
-                  a <- liftIO . query $ printf "Delete %s? y/(n)" (describeSecret sc)
+                  a <- liftIO . query $ printf "Delete %s? y/[n]" (describeSecret sc)
                   case unwords . words . map toLower $ a of
                     'y':_ -> do
                       liftIO $ putStrLn "Deleted!"
@@ -270,6 +289,11 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
             printf "No item with ID %d found.\n" n
             exitFailure
           return st'
+      Dump t -> getEnc ctx e >>= \st -> do
+        T.putStrLn . T.decodeUtf8 $ case t of
+            DTJSON -> BSL.toStrict $ J.encode st
+            DTYaml -> Y.encode st
+        return Nothing
 
     traverse_ (B.encodeFile oFile') e'
 
@@ -278,7 +302,7 @@ mkSecret = do
     a <- query "Account?"
     i <- query "Issuer? (optional)"
     k <- query "Secret?"
-    m <- query "(t)ime- or (c)ounter-based?"
+    m <- query "[t]ime- or (c)ounter-based?"
     let i' = mfilter (not . null) (Just i)
         k' = B32.toBytes . B32.b32String' . T.encodeUtf8
            . T.pack
@@ -291,19 +315,22 @@ mkSecret = do
                  k'
     case m of
       'c':_ -> do
-        n <- query "Initial counter? (0)"
-        let n' | null n    = 0
-               | otherwise = read n
-        return $ SHOTP :=> s :&: HOTPState n'
+        n <- query "Initial counter? [0]"
+        n' <- if null n
+          then return 0
+          else case readMaybe n of
+                 Just r -> return r
+                 Nothing -> putStrLn "Invalid initial counter.  Using 0." $> 0
+        return $ SHOTP :=> s :&: HOTPState n' Nothing
       't':_ -> return $ STOTP :=> s :&: TOTPState
       _     -> error "Unknown type"
 
 editSecret :: Secret m -> IO (Secret m)
 editSecret sc = do
-    a <- query $ printf "Account? (%s)" (secAccount sc)
+    a <- query $ printf "Account? [%s]" (secAccount sc)
     i <- query $ printf "Issuer?%s (optional)" (case secIssuer sc of
                                                   Nothing -> ""
-                                                  Just si -> " (" <> si <> ")"
+                                                  Just si -> " [" <> si <> "]"
                                                )
     let a' | null a    = secAccount sc
            | otherwise = T.pack a
