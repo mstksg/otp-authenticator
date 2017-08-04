@@ -3,19 +3,26 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeOperators       #-}
 
 import           Authenticator
 import           Control.Exception
 import           Control.Monad
+import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Maybe
 import           Data.Char
 import           Data.Dependent.Sum
+import           Data.Foldable
 import           Data.Functor
+import           Data.Maybe
 import           Data.Semigroup hiding     (option)
 import           Data.Singletons
+import           Data.Traversable
 import           Data.Type.Conjunction
 import           Encrypted
 import           Lens.Micro
 import           Options.Applicative
+import           System.Exit
 import           System.FilePath
 import           System.IO
 import           System.IO.Error
@@ -28,21 +35,23 @@ import qualified Data.ByteString           as BS
 import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as T
 
-data Cmd = Add
-         | View
+data Cmd = Add Bool
+         | View (Maybe T.Text) (Maybe T.Text)
 
-data Opts = Opts { oFingerprint :: BS.ByteString
+data Opts = Opts { oFingerprint :: Maybe BS.ByteString
                  , oFile        :: Maybe FilePath
                  , oGPG         :: FilePath
                  , oCmd         :: Cmd
                  }
 
 parseOpts :: Parser Opts
-parseOpts = Opts <$> option str ( long "fingerprint"
-                               <> short 'p'
-                               <> metavar "KEY"
-                               <> help "Fingerprint of key to use"
-                                )
+parseOpts = Opts <$> optional (
+                       option str ( long "fingerprint"
+                                 <> short 'p'
+                                 <> metavar "KEY"
+                                 <> help "Fingerprint of key to use"
+                                  )
+                                 )
                  <*> option (Just <$> str) ( long "file"
                               <> short 'f'
                               <> metavar "PATH"
@@ -57,12 +66,30 @@ parseOpts = Opts <$> option str ( long "fingerprint"
                               <> showDefaultWith id
                               <> help ".gnupg file"
                                )
-                 <*> subparser ( command "add" (info parseAdd (progDesc "Add a thing"))
-                              <> command "view" (info parseView (progDesc "View a thing"))
+                 <*> subparser ( command "add"  (info (parseAdd <**> helper)
+                                                      (progDesc "Add a thing")
+                                                )
+                              <> command "view" (info (parseView <**> helper)
+                                                      (progDesc "View a thing")
+                                                )
                                )
   where
-    parseAdd = pure Add
-    parseView = pure View
+    parseAdd = Add <$> switch ( long "uri"
+                             <> short 'u'
+                             <> help "Enter account using secret URI (from QR Code)"
+                              )
+    parseView = View <$> optional (option str ( long "account"
+                                             <> short 'a'
+                                             <> metavar "NAME"
+                                             <> help "Filter by account"
+                                              )
+                                  )
+                     <*> optional (option str ( long "issuer"
+                                             <> short 'i'
+                                             <> metavar "SITE"
+                                             <> help "Filter by issuer"
+                                              )
+                                  )
 
 main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
@@ -71,7 +98,9 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
                                <> progDesc "OTP Viewer"
                                <> header "otp-authenticator: authenticate me, cap'n"
                                 )
-    Just k <- G.getKey ctx oFingerprint G.NoSecret
+    k <- for oFingerprint $ \fing -> do
+      Just k' <- G.getKey ctx fing G.NoSecret
+      return k'
 
     oFile' <- case oFile of
       Just fp -> return fp
@@ -81,51 +110,56 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
 
     e <- B.decodeFile @(Enc Store) oFile' `catch` \e ->
       if isDoesNotExistError e
-        then do
-          putStrLn "Generating new vault ..."
-          mkEnc ctx k $ Store []
+        then case (,) <$> k <*> oFingerprint of
+          Nothing -> do
+            putStrLn "No vault found; please try again with a fingerprint to create new vault."
+            exitFailure
+          Just (k', fing) -> do
+            printf "No vault found; generating new vault with fingerprint %s ...\n" $
+              T.decodeUtf8 fing
+            mkEnc ctx k' $ Store []
         else throwIO e
-    
-    e' <- overEnc ctx k e $ \st ->
-      case oCmd of
-        View -> storeSecrets (\(sc :: Secret m) ms -> do
-            case sing @_ @m of
-              SHOTP -> printf "%s: \tCounter-based key\n" (describeSecret sc) $> ms
+
+    e' <- case oCmd of
+      View fAcc fIss -> getEnc ctx e >>= \st -> do
+        _ <- storeSecrets (\(sc :: Secret m) ms -> fmap (fromMaybe ms) . runMaybeT $ do
+            traverse_ guard ((== secAccount sc) <$> fAcc)
+            traverse_ guard ((==) <$> fIss <*> secIssuer sc)
+            liftIO $ case sing @_ @m of
+              SHOTP ->
+                printf "%s: \tCounter-based key\n" (describeSecret sc) $> ms
               STOTP -> do
                 p <- totp sc
                 printf "%s: %d\n" (describeSecret sc) p
                 return ms
           ) st
-        Add -> do
-          dsc <- mkSecret
-          return $ case dsc of
-            s :=> sc -> withSingI s $
-              st & _Store %~ (++ [s :=> (sc :&: initState)])
+        return Nothing
+      Add u -> case k of
+        Nothing -> do
+          putStrLn "Adding a key requires a fingerprint."
+          exitFailure
+        Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
+          dsc <- if u
+            then (parseSecretURI <$> query "URI Secret?") >>= \case
+                    Left err -> do
+                      putStrLn "Parse error:"
+                      putStrLn err
+                      exitFailure
+                    Right d ->
+                      return d
+            else mkSecret
+          putStrLn "Added succesfully!"
+          return $
+            st & _Store %~ (++ [dsc])
 
-    B.encodeFile oFile' e'
-  where
-    -- is there a lib for this?
-    -- expandHome :: FilePath -> IO FilePath
-    -- expandHome = \case
-    --   '~':s -> do
-    --     let (uname, rest) = span (/= '/') s
-    --     ue <- if null uname
-    --       then getUserEntryForID =<< getEffectiveUserID
-    --       else getUserEntryForName uname
-    --     return $ homeDirectory ue ++ rest
-    --   fp -> return fp
+    traverse_ (B.encodeFile oFile') e'
 
-    -- e <- mkEnc ctx k ("Hello, world!" :: String)
-    -- B.encodeFile "enctest.dat" e
-    -- e' <- B.decodeFile @(Enc String) "enctest.dat"
-    -- putStrLn =<< getEnc ctx e'
-
-mkSecret :: IO (DSum Sing Secret)
+mkSecret :: IO (DSum Sing (Secret :&: ModeState))
 mkSecret = do
-    a <- putStr "Account?: " *> hFlush stdout *> getLine
-    i <- putStr "Issuer?: " *> hFlush stdout *> getLine
-    k <- putStr "Secret?: " *> hFlush stdout *> getLine
-    m <- putStr "(t)ime- or (c)ounter-based?: " *> hFlush stdout *> getLine
+    a <- query "Account?"
+    i <- query "Issuer? (optional)"
+    k <- query "Secret?"
+    m <- query "(t)ime- or (c)ounter-based?"
     let i' = mfilter (not . null) (Just i)
         k' = B32.toBytes . B32.b32String' . T.encodeUtf8
            . T.pack
@@ -136,8 +170,17 @@ mkSecret = do
                  HASHA1
                  6
                  k'
-    return $ case m of
-      'c':_ -> SHOTP :=> s
-      't':_ -> STOTP :=> s
+    case m of
+      'c':_ -> do
+        n <- query "Initial counter?"
+        let n' | null n    = 0
+               | otherwise = read n
+        return $ SHOTP :=> s :&: HOTPState n'
+      't':_ -> return $ STOTP :=> s :&: TOTPState
       _     -> error "Unknown type"
 
+query :: String -> IO String
+query p = do
+    putStr $ p ++ ": "
+    hFlush stdout
+    getLine
