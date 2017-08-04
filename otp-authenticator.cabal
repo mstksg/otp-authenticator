@@ -54,6 +54,7 @@ executable otp-auth
                      , text
                      , transformers
                      , type-combinators
+                     , witherable
                      , unix
   default-language:    Haskell2010
 

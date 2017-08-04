@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StrictData    #-}
 {-# LANGUAGE TupleSections #-}
 
 module Encrypted (
@@ -9,12 +10,9 @@ module Encrypted (
   , mkEnc
   ) where
 
-import           Data.Either
-import           Control.Monad
 import           GHC.Generics         (Generic)
 import qualified Crypto.Gpgme         as G
 import qualified Data.Binary          as B
-import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 
 data Enc a = Enc { encBytes :: G.Encrypted }

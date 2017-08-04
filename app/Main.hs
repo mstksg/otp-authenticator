@@ -23,10 +23,12 @@ import           Data.Semigroup hiding      (option, First(..))
 import           Data.Singletons
 import           Data.Traversable
 import           Data.Type.Conjunction
+import           Data.Witherable
 import           Encrypted
 import           Lens.Micro
 import           Options.Applicative
 import           System.Exit
+import           Prelude hiding (filter)
 import           System.FilePath
 import           System.IO
 import           System.IO.Error
@@ -40,8 +42,10 @@ import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 
 data Cmd = Add Bool
-         | View Bool (Maybe T.Text) (Maybe T.Text)
+         | View Bool (Either Int (Maybe T.Text, Maybe T.Text))
          | Gen Int
+         | Edit Int
+         | Delete Int
 
 data Opts = Opts { oFingerprint :: Maybe BS.ByteString
                  , oFile        :: Maybe FilePath
@@ -80,6 +84,12 @@ parseOpts = Opts <$> optional (
                               <> command "gen"  (info (parseGen <**> helper)
                                                       (progDesc "Generate OTP for specific item # (use view to list items)")
                                                 )
+                              <> command "edit" (info (parseEdit <**> helper)
+                                                      (progDesc "Edit a thing")
+                                                )
+                              <> command "delete" (info (parseDelete <**> helper)
+                                                      (progDesc "Delete a thing")
+                                                )
                                )
   where
     parseAdd = Add <$> switch ( long "uri"
@@ -90,21 +100,31 @@ parseOpts = Opts <$> optional (
                                <> short 'l'
                                <> help "Only list accounts; do not generate any keys."
                                 )
-                     <*> optional (option str ( long "account"
-                                             <> short 'a'
-                                             <> metavar "NAME"
-                                             <> help "Optional filter by account"
-                                              )
-                                  )
-                     <*> optional (option str ( long "issuer"
-                                             <> short 'i'
-                                             <> metavar "SITE"
-                                             <> help "Optional filter by issuer"
-                                              )
-                                  )
+                     <*> (Left <$> (argument auto ( metavar "ID"
+                                                   <> help "Specific ID number of account"
+                                                   ))
+                       <|> Right <$> ((,) <$> optional (option str ( long "account"
+                                                        <> short 'a'
+                                                        <> metavar "NAME"
+                                                        <> help "Optional filter by account"
+                                                         )
+                                             )
+                                <*> optional (option str ( long "issuer"
+                                                        <> short 'i'
+                                                        <> metavar "SITE"
+                                                        <> help "Optional filter by issuer"
+                                                         )
+                                             ))
+                          )
     parseGen = Gen <$> argument auto ( metavar "ID"
                                     <> help "ID number of account"
                                      )
+    parseEdit = Edit <$> argument auto ( metavar "ID"
+                                      <> help "ID number of account"
+                                       )
+    parseDelete = Delete <$> argument auto ( metavar "ID"
+                                      <> help "ID number of account"
+                                       )
 
 main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
@@ -136,12 +156,16 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
         else throwIO e
 
     e' <- case oCmd of
-      View l fAcc fIss -> getEnc ctx e >>= \st -> do
-        _ <- flip runStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
+      View l filts -> getEnc ctx e >>= \st -> do
+        (n,found) <- runWriterT . flip execStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
             i <- state $ \x -> (x :: Int, x + 1)
             fmap (fromMaybe ms) . runMaybeT $ do
-              traverse_ (guard . (== secAccount sc)) fAcc
-              traverse_ (guard . (== secIssuer sc) . Just) fIss
+              case filts of
+                Left n -> guard (i == n)
+                Right (fAcc, fIss) -> do
+                  traverse_ (guard . (== secAccount sc)) fAcc
+                  traverse_ (guard . (== secIssuer sc) . Just) fIss
+              lift . lift $ tell (Any True)
               liftIO $ if l
                 then printf "(%d) %s\n" i (describeSecret sc) $> ms
                 else case sing @_ @m of
@@ -152,12 +176,17 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
                     printf "(%d) %s: %d\n" i (describeSecret sc) p
                     return ms
           ) st
+        printf "Searched %d total entries.\n" (n - 1)
+        unless (getAny found) $ case filts of
+          Left i   -> printf "ID %d not found!\n" i *> exitFailure
+          Right _  -> putStrLn "No matches found!"
         return Nothing
       Add u -> case k of
         Nothing -> do
           putStrLn "Adding a key requires a fingerprint."
           exitFailure
         Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
+          -- TODO: veriffy
           dsc <- if u
             then (parseSecretURI <$> query "URI Secret?") >>= \case
                     Left err -> do
@@ -196,6 +225,51 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
             Nothing -> do
               printf "No item with ID %d found.\n" n
               exitFailure
+      Edit n -> case k of
+        Nothing -> do
+          putStrLn "Editing keys requires a fingerprint."
+          exitFailure
+        Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
+          (st', found) <- runWriterT . flip evalStateT 1 . forOf (_Store . traverse) st $ \case
+            ds@(s :=> sc :&: ms) -> do
+              i <- state $ \x -> (x :: Int, x + 1)
+              if n == i
+                then do
+                  sc' <- liftIO $ do
+                    printf "Editing (%d) %s ...\n" i (describeSecret sc)
+                    liftIO (editSecret sc)
+                  lift $ tell (First (Just (describeSecret sc')))
+                  return $ s :=> sc :&: ms
+                else return ds
+          case getFirst found of
+            Nothing -> do
+              printf "No item with ID %d found.\n" n
+              exitFailure
+            Just desc -> do
+              printf "%s edited successfuly!\n" desc
+              return st'
+      Delete n -> case k of
+        Nothing -> do
+          putStrLn "Deleting keys requires a fingerprint."
+          exitFailure
+        Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
+          (st', found) <- runWriterT . flip evalStateT 1 . forOf (_Store . wither) st $ \case
+            ds@(_ :=> sc :&: _) -> do
+              i <- state $ \x -> (x :: Int, x + 1)
+              if n == i
+                then do
+                  a <- liftIO . query $ printf "Delete %s? y/(n)" (describeSecret sc)
+                  case unwords . words . map toLower $ a of
+                    'y':_ -> do
+                      liftIO $ putStrLn "Deleted!"
+                      lift $ tell (Any True)
+                      return Nothing
+                    _     -> return (Just ds)
+                else return (Just ds)
+          unless (getAny found) $ do
+            printf "No item with ID %d found.\n" n
+            exitFailure
+          return st'
 
     traverse_ (B.encodeFile oFile') e'
 
@@ -223,6 +297,21 @@ mkSecret = do
         return $ SHOTP :=> s :&: HOTPState n'
       't':_ -> return $ STOTP :=> s :&: TOTPState
       _     -> error "Unknown type"
+
+editSecret :: Secret m -> IO (Secret m)
+editSecret sc = do
+    a <- query $ printf "Account? (%s)" (secAccount sc)
+    i <- query $ printf "Issuer?%s (optional)" (case secIssuer sc of
+                                                  Nothing -> ""
+                                                  Just si -> " (" <> si <> ")"
+                                               )
+    let a' | null a    = secAccount sc
+           | otherwise = T.pack a
+        i' | null i    = secIssuer sc
+           | otherwise = Just $ T.pack i
+    return $ sc { secAccount = a'
+                , secIssuer  = i'
+                }
 
 query :: String -> IO String
 query p = do
