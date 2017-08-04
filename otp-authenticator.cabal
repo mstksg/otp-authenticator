@@ -34,12 +34,12 @@ library
                      , type-combinators
                      , uri-encode
   default-language:    Haskell2010
-  ghc-options:         -Wall -fdiagnostics-color=always
+  ghc-options:         -Wall
 
 executable otp-auth
   hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall -fdiagnostics-color=always
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
                      , aeson
                      , base32string
