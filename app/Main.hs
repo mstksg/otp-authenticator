@@ -18,7 +18,8 @@ import           Data.Dependent.Sum
 import           Data.Foldable
 import           Data.Functor
 import           Data.Maybe
-import           Data.Semigroup hiding      (option)
+import           Data.Monoid                (First(..))
+import           Data.Semigroup hiding      (option, First(..))
 import           Data.Singletons
 import           Data.Traversable
 import           Data.Type.Conjunction
@@ -39,7 +40,7 @@ import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 
 data Cmd = Add Bool
-         | View (Maybe T.Text) (Maybe T.Text)
+         | View Bool (Maybe T.Text) (Maybe T.Text)
          | Gen Int
 
 data Opts = Opts { oFingerprint :: Maybe BS.ByteString
@@ -85,7 +86,11 @@ parseOpts = Opts <$> optional (
                              <> short 'u'
                              <> help "Enter account using secret URI (from QR Code)"
                               )
-    parseView = View <$> optional (option str ( long "account"
+    parseView = View <$> switch ( long "list"
+                               <> short 'l'
+                               <> help "Only list accounts; do not generate any keys."
+                                )
+                     <*> optional (option str ( long "account"
                                              <> short 'a'
                                              <> metavar "NAME"
                                              <> help "Optional filter by account"
@@ -97,7 +102,7 @@ parseOpts = Opts <$> optional (
                                              <> help "Optional filter by issuer"
                                               )
                                   )
-    parseGen = Gen <$> argument auto ( metavar "NUM"
+    parseGen = Gen <$> argument auto ( metavar "ID"
                                     <> help "ID number of account"
                                      )
 
@@ -131,19 +136,21 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
         else throwIO e
 
     e' <- case oCmd of
-      View fAcc fIss -> getEnc ctx e >>= \st -> do
+      View l fAcc fIss -> getEnc ctx e >>= \st -> do
         _ <- flip runStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
             i <- state $ \x -> (x :: Int, x + 1)
             fmap (fromMaybe ms) . runMaybeT $ do
               traverse_ (guard . (== secAccount sc)) fAcc
               traverse_ (guard . (== secIssuer sc) . Just) fIss
-              liftIO $ case sing @_ @m of
-                SHOTP ->
-                  printf "(%d) %s: \tCounter-based key\n" i (describeSecret sc) $> ms
-                STOTP -> do
-                  p <- totp sc
-                  printf "(%d) %s: %d\n" i (describeSecret sc) p
-                  return ms
+              liftIO $ if l
+                then printf "(%d) %s\n" i (describeSecret sc) $> ms
+                else case sing @_ @m of
+                  SHOTP ->
+                    printf "(%d) %s: [Counter-based key, view with gen]\n" i (describeSecret sc) $> ms
+                  STOTP -> do
+                    p <- totp sc
+                    printf "(%d) %s: %d\n" i (describeSecret sc) p
+                    return ms
           ) st
         return Nothing
       Add u -> case k of
@@ -164,28 +171,31 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           return $
             st & _Store %~ (++ [dsc])
       Gen n -> getEnc ctx e >>= \st -> do
-        (new, (changed, found)) <- runWriterT . flip evalStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
+        res <- runMaybeT . runWriterT . flip evalStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
             i <- state $ \x -> (x :: Int, x + 1)
             if n == i
               then case sing @_ @m of
-                SHOTP -> do
-                  let (p, ms') = hotp sc ms
-                  liftIO $ printf "(%d) %s: %d\n" i (describeSecret sc) p
-                  lift $ ms' <$ tell (Any True, Any True)
+                SHOTP -> case k of
+                  Just k' -> do
+                    let (p, ms') = hotp sc ms
+                    liftIO $ printf "(%d) %s: %d\n" i (describeSecret sc) p
+                    lift $ ms' <$ tell (First (Just k'))
+                  Nothing -> liftIO $ do
+                    putStrLn "Generating a counter-based (HOTP) key requires a fingerprint."
+                    exitFailure
                 STOTP -> do
                   liftIO $ do
                     p <- totp sc
                     printf "(%d) %s: %d\n" i (describeSecret sc) p
-                  lift $ ms <$ tell (Any False, Any True)
+                  empty
               else return ms
           ) st
-        if getAny found
-          then if getAny changed
-                 then Just <$> mkEnc ctx undefined new
-                 else return Nothing
-          else do
-            printf "No item with ID %d found.\n" n
-            exitFailure
+        forM res $ \(r, changed) ->
+          case getFirst changed of
+            Just k' -> mkEnc ctx k' r
+            Nothing -> do
+              printf "No item with ID %d found.\n" n
+              exitFailure
 
     traverse_ (B.encodeFile oFile') e'
 
@@ -207,7 +217,7 @@ mkSecret = do
                  k'
     case m of
       'c':_ -> do
-        n <- query "Initial counter?"
+        n <- query "Initial counter? (0)"
         let n' | null n    = 0
                | otherwise = read n
         return $ SHOTP :=> s :&: HOTPState n'
