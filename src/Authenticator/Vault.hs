@@ -18,7 +18,7 @@
 {-# LANGUAGE ViewPatterns         #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Authenticator (
+module Authenticator.Vault (
     Mode(..)
   , Sing(SHOTP, STOTP)
   , SMode, HOTPSym0, TOTPSym0
@@ -26,8 +26,8 @@ module Authenticator (
   , parseAlgo
   , Secret(..)
   , ModeState(..)
-  , Store(..)
-  , _Store
+  , Vault(..)
+  , _Vault
   , hotp
   , totp
   , totp_
@@ -188,13 +188,13 @@ instance J.ToJSON (DSum Sing (Secret :&: ModeState)) where
         ] ++ case s of SHOTP -> ["state" J..= ms]
                        STOTP -> []
 
-data Store = Store { storeList :: [DSum Sing (Secret :&: ModeState)] }
+data Vault = Vault { vaultList :: [DSum Sing (Secret :&: ModeState)] }
   deriving Generic
 
-instance B.Binary Store
-instance J.ToJSON Store where
-    toEncoding l = J.pairs $ "store" J..= storeList l
-    toJSON l     = J.object ["store" J..= storeList l]
+instance B.Binary Vault
+instance J.ToJSON Vault where
+    toEncoding l = J.pairs $ "store" J..= vaultList l
+    toJSON l     = J.object ["store" J..= vaultList l]
 
 hotp :: Secret 'HOTP -> ModeState 'HOTP -> (Word32, ModeState 'HOTP)
 hotp Sec{..} (HOTPState i) = (p, HOTPState (i + 1))
@@ -229,16 +229,16 @@ deriving instance (Functor f, Functor g) => Functor (f :.: g)
 storeSecrets
     :: Applicative f
     => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m))
-    -> Store
-    -> f Store
-storeSecrets f = (_Store . traverse) (someSecret f)
+    -> Vault
+    -> f Vault
+storeSecrets f = (_Vault . traverse) (someSecret f)
 
-_Store
+_Vault
     :: Functor f
     => ([DSum Sing (Secret :&: ModeState)] -> f [DSum Sing (Secret :&: ModeState)])
-    -> Store
-    -> f Store
-_Store f s = Store <$> f (storeList s)
+    -> Vault
+    -> f Vault
+_Vault f s = Vault <$> f (vaultList s)
 
 secretURI :: P.Parser (DSum Sing (Secret :&: ModeState))
 secretURI = do

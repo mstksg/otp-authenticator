@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -7,7 +6,9 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 
-import           Authenticator
+import           Authenticator.Common
+import           Authenticator.Options
+import           Authenticator.Vault
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -27,190 +28,27 @@ import           Data.Traversable
 import           Data.Type.Conjunction
 import           Data.Witherable
 import           Encrypted
-import           GHC.Generics               (Generic)
 import           Lens.Micro
 import           Options.Applicative
 import           Prelude hiding             (filter)
 import           System.Exit
-import           System.FilePath
-import           System.IO
 import           System.IO.Error
-import           System.Posix.User
 import           Text.Printf
 import           Text.Read                  (readMaybe)
 import qualified Crypto.Gpgme               as G
 import qualified Data.Aeson                 as J
-import qualified Data.Aeson.Types           as J
 import qualified Data.Base32String.Default  as B32
 import qualified Data.Binary                as B
-import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as BSL
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 import qualified Data.Text.IO               as T
 import qualified Data.Yaml                  as Y
 
-data DumpType = DTYaml | DTJSON
-
-data Cmd = Add Bool
-         | View Bool (Either Int (Maybe T.Text, Maybe T.Text))
-         | Gen Int
-         | Edit Int
-         | Delete Int
-         | Dump DumpType
-
-data Opts = Opts { oFingerprint :: Maybe BS.ByteString
-                 , oVault       :: Maybe FilePath
-                 , oConfig      :: Maybe FilePath
-                 , oGPG         :: FilePath
-                 , oCmd         :: Cmd
-                 }
-
-data Config = Conf { cFingerprint :: Maybe T.Text
-                   , cVault       :: Maybe FilePath
-                   }
-  deriving (Generic)
-
-confJsonOpts :: J.Options
-confJsonOpts = J.defaultOptions { J.fieldLabelModifier = J.camelTo2 '-' . drop 1 }
-instance J.FromJSON Config where
-    parseJSON  = J.genericParseJSON  confJsonOpts
-instance J.ToJSON Config where
-    toEncoding = J.genericToEncoding confJsonOpts
-    toJSON     = J.genericToJSON     confJsonOpts
-
-parseOpts :: Parser Opts
-parseOpts = Opts <$> optional (
-                       option str' ( long "fingerprint"
-                                 <> short 'p'
-                                 <> metavar "KEY"
-                                 <> help "Fingerprint of key to use"
-                                  )
-                                 )
-                 <*> option (Just <$> str) ( long "vault"
-                              <> short 'v'
-                              <> metavar "PATH"
-                              <> value Nothing
-                              <> showDefaultWith (const "~/.otp-auth.vault")
-                              <> help "Location of vault"
-                               )
-                 <*> option (Just <$> str) ( long "config"
-                              <> short 'c'
-                              <> metavar "PATH"
-                              <> value Nothing
-                              <> showDefaultWith (const "~/.otp-auth.yaml")
-                              <> help "Location of configuration file"
-                               )
-                 <*> strOption ( long "gnupg"
-                              <> short 'g'
-                              <> metavar "PATH"
-                              <> value "~/.gnupg"
-                              <> showDefaultWith id
-                              <> help ".gnupg file"
-                               )
-                 <*> subparser ( command "add"  (info (parseAdd <**> helper)
-                                                      (progDesc "Add a thing")
-                                                )
-                              <> command "view" (info (parseView <**> helper)
-                                                      (progDesc "View the things")
-                                                )
-                              <> command "gen"  (info (parseGen <**> helper)
-                                                      (progDesc "Generate OTP for specific item # (use view to list items)")
-                                                )
-                              <> command "edit" (info (parseEdit <**> helper)
-                                                      (progDesc "Edit a thing")
-                                                )
-                              <> command "delete" (info (parseDelete <**> helper)
-                                                      (progDesc "Delete a thing")
-                                                )
-                              <> command "dump" (info (parseDump <**> helper)
-                                                      (progDesc "Dump all data as json")
-                                                )
-                               )
-  where
-    parseAdd = Add <$> switch ( long "uri"
-                             <> short 'u'
-                             <> help "Enter account using secret URI (from QR Code)"
-                              )
-    parseView = View <$> switch ( long "list"
-                               <> short 'l'
-                               <> help "Only list accounts; do not generate any keys."
-                                )
-                     <*> (Left <$> (argument auto ( metavar "ID"
-                                                   <> help "Specific ID number of account"
-                                                   ))
-                       <|> Right <$> ((,) <$> optional (option str' ( long "account"
-                                                        <> short 'a'
-                                                        <> metavar "NAME"
-                                                        <> help "Optional filter by account"
-                                                         )
-                                             )
-                                <*> optional (option str' ( long "issuer"
-                                                        <> short 'i'
-                                                        <> metavar "SITE"
-                                                        <> help "Optional filter by issuer"
-                                                         )
-                                             ))
-                          )
-    parseGen = Gen <$> argument auto ( metavar "ID"
-                                    <> help "ID number of account"
-                                     )
-    parseEdit = Edit <$> argument auto ( metavar "ID"
-                                      <> help "ID number of account"
-                                       )
-    parseDelete = Delete <$> argument auto ( metavar "ID"
-                                      <> help "ID number of account"
-                                       )
-    parseDump = Dump <$> flag DTJSON DTYaml ( long "yaml"
-                                           <> short 'y'
-                                           <> help "Yaml output"
-                                            )
 
 main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
-    Opts{..} <- execParser $ info (parseOpts <**> helper)
-                                ( fullDesc
-                               <> progDesc "OTP Viewer"
-                               <> header "otp-authenticator: authenticate me, cap'n"
-                                )
-
-    oConfig' <- case oConfig of
-      Just fp -> return fp
-      Nothing -> do
-        ue <- getUserEntryForID =<< getEffectiveUserID
-        return $ homeDirectory ue </> ".otp-auth.yaml"
-
-    (Conf{..}, mkNewConf) <- do
-      (c0, mkNew) <- ((, False) . Y.decodeEither <$> BS.readFile oConfig') `catch` \e ->
-        if isDoesNotExistError e
-          then return (Right (Conf Nothing Nothing), True)
-          else throwIO e
-      case c0 of
-        Left e -> do
-          putStrLn "Could not parse configuration file.  Ignoring."
-          putStrLn e
-          return (Conf Nothing Nothing, False)
-        Right c1 -> return (c1, mkNew)
-
-    vault <- case oVault <|> cVault of
-      Just fp -> return fp
-      Nothing -> do
-        ue <- getUserEntryForID =<< getEffectiveUserID
-        return $ homeDirectory ue </> ".otp-auth.vault"
-
-
-    cFingerprint' <- if mkNewConf
-      then do
-        printf "Config file not found; generating default file at %s\n" oConfig'
-        fing <- case oFingerprint of
-          Just p  -> return $ Just (T.decodeUtf8 p)
-          Nothing -> mfilter (not . T.null) . Just . T.pack <$> query "Fingerprint?"
-        Y.encodeFile oConfig' $ Conf fing (Just vault)
-        return fing
-      else
-        return cFingerprint
-
-    let fingerprint = oFingerprint <|> (T.encodeUtf8 <$> cFingerprint')
+    (cmd, vault, fingerprint) <- getOptions
 
     k <- for fingerprint $ \fing -> do
       G.getKey ctx fing G.NoSecret >>= \case
@@ -219,7 +57,8 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           exitFailure
         Just k' -> return k'
 
-    (e, mkNewVault) <- ((,False) <$> B.decodeFile @(Enc Store) vault) `catch` \e ->
+
+    (e, mkNewVault) <- ((,False) <$> B.decodeFile @(Enc Vault) vault) `catch` \e ->
       if isDoesNotExistError e
         then case (,) <$> k <*> fingerprint of
           Nothing -> do
@@ -228,10 +67,10 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           Just (k', fing) -> do
             printf "No vault found; generating new vault with fingerprint %s ...\n" $
               T.decodeUtf8 fing
-            (,True) <$> mkEnc ctx k' (Store [])
+            (,True) <$> mkEnc ctx k' (Vault [])
         else throwIO e
 
-    e' <- case oCmd of
+    e' <- case cmd of
       View l filts -> getEnc ctx e >>= \st -> do
         (n,found) <- runWriterT . flip execStateT 1 $ storeSecrets (\(sc :: Secret m) ms -> do
             i <- state $ \x -> (x :: Int, x + 1)
@@ -274,9 +113,9 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
             else mkSecret
           putStrLn "Added succesfully!"
           return $
-            st & _Store %~ (++ [dsc])
+            st & _Vault %~ (++ [dsc])
       Gen n -> getEnc ctx e >>= \st -> do
-        res <- runMaybeT . runWriterT . forOf (_Store . ix (n - 1)) st $ \case
+        res <- runMaybeT . runWriterT . forOf (_Vault . ix (n - 1)) st $ \case
           s :=> sc :&: ms -> 
             case s of
               SHOTP -> case k of
@@ -304,7 +143,7 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           putStrLn "Editing keys requires a fingerprint."
           exitFailure
         Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
-          (st', found) <- runWriterT . forOf (_Store . ix (n - 1)) st $ \case
+          (st', found) <- runWriterT . forOf (_Vault . ix (n - 1)) st $ \case
             (s :=> sc :&: ms) -> do
               sc' <- liftIO $ do
                 printf "Editing (%d) %s ...\n" n (describeSecret sc)
@@ -323,7 +162,7 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
           putStrLn "Deleting keys requires a fingerprint."
           exitFailure
         Just k' -> fmap Just . overEnc ctx k' e $ \st -> do
-          (st', found) <- runWriterT . flip evalStateT 1 . forOf (_Store . wither) st $ \case
+          (st', found) <- runWriterT . flip evalStateT 1 . forOf (_Vault . wither) st $ \case
             ds@(_ :=> sc :&: _) -> do
               i <- state $ \x -> (x :: Int, x + 1)
               if n == i
@@ -392,13 +231,3 @@ editSecret sc = do
     return $ sc { secAccount = a'
                 , secIssuer  = i'
                 }
-
-query :: String -> IO String
-query p = do
-    putStr $ p ++ ": "
-    hFlush stdout
-    getLine
-
--- | is str from optparse-applicative 0.14 and above
-str' :: IsString s => ReadM s
-str' = fromString <$> str

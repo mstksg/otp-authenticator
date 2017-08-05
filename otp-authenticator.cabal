@@ -27,10 +27,13 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Authenticator
+  exposed-modules:     Authenticator.Vault
                        Encrypted
+                       Authenticator.Common
+                       Authenticator.Options
   build-depends:       base >= 4.9 && < 5
                      , aeson
+                     , unix
                      , base32string
                      , bifunctors
                      , binary
@@ -38,14 +41,17 @@ library
                      , containers
                      , cryptonite
                      , dependent-sum
+                     , filepath
                      , h-gpgme
                      , one-time-password
+                     , optparse-applicative
                      , singletons
                      , text
                      , time
                      , trifecta
                      , type-combinators
                      , uri-encode
+                     , yaml
   default-language:    Haskell2010
   ghc-options:         -Wall
 
