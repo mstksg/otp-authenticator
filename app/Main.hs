@@ -20,9 +20,9 @@ import           Data.Dependent.Sum
 import           Data.Foldable
 import           Data.Functor
 import           Data.Maybe
-import           Data.Monoid                (First(..))
-import           Data.Semigroup hiding      (option, First(..))
+import           Data.Monoid
 import           Data.Singletons
+import           Data.String
 import           Data.Traversable
 import           Data.Type.Conjunction
 import           Data.Witherable
@@ -81,7 +81,7 @@ instance J.ToJSON Config where
 
 parseOpts :: Parser Opts
 parseOpts = Opts <$> optional (
-                       option str ( long "fingerprint"
+                       option str' ( long "fingerprint"
                                  <> short 'p'
                                  <> metavar "KEY"
                                  <> help "Fingerprint of key to use"
@@ -139,13 +139,13 @@ parseOpts = Opts <$> optional (
                      <*> (Left <$> (argument auto ( metavar "ID"
                                                    <> help "Specific ID number of account"
                                                    ))
-                       <|> Right <$> ((,) <$> optional (option str ( long "account"
+                       <|> Right <$> ((,) <$> optional (option str' ( long "account"
                                                         <> short 'a'
                                                         <> metavar "NAME"
                                                         <> help "Optional filter by account"
                                                          )
                                              )
-                                <*> optional (option str ( long "issuer"
+                                <*> optional (option str' ( long "issuer"
                                                         <> short 'i'
                                                         <> metavar "SITE"
                                                         <> help "Optional filter by issuer"
@@ -398,3 +398,7 @@ query p = do
     putStr $ p ++ ": "
     hFlush stdout
     getLine
+
+-- | is str from optparse-applicative 0.14 and above
+str' :: IsString s => ReadM s
+str' = fromString <$> str
