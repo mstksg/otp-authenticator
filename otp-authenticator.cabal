@@ -1,6 +1,6 @@
 name:                otp-authenticator
 version:             0.1.0.0
-synopsis:            OTP Authenticator (a la google) command line client, over gnupg
+synopsis:            OTP Authenticator (a la google) command line client
 description:         Simple tool for keeping track of your one-time pad
                      two-factor authentication keys; basically a command-line
                      version of the canonical [Google Authenticator
@@ -19,10 +19,10 @@ license:             BSD3
 license-file:        LICENSE
 author:              Justin Le
 maintainer:          justin@jle.im
-copyright:           (c) Justin Le 2016
-category:            Web
+copyright:           (c) Justin Le 2017
+category:            CLI
 build-type:          Simple
-extra-source-files:  README.md
+extra-source-files:  README.md, CHANGELOG.md
 cabal-version:       >=1.10
 
 library

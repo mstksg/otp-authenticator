@@ -40,8 +40,6 @@ import qualified Data.Base32String.Default  as B32
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 
-
-
 viewVault
     :: Bool
     -> Either Int (Maybe T.Text, Maybe T.Text)

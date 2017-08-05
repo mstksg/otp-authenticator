@@ -33,7 +33,6 @@ import qualified Data.Yaml                     as Y
 import qualified Options.Applicative           as O
 
 
-
 data DumpType = DTYaml | DTJSON
 
 data Cmd = Add Bool
