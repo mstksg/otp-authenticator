@@ -1,8 +1,8 @@
 name:                otp-authenticator
 version:             0.1.0.0
 synopsis:            OTP Authenticator (a la google) command line client, over gnupg
--- description:
-homepage:            https://github.com/mstksg/otp-authenticator#readme
+description:         See README.md
+homepage:            https://github.com/mstksg/otp-authenticator
 license:             BSD3
 license-file:        LICENSE
 author:              Justin Le
@@ -17,9 +17,10 @@ library
   hs-source-dirs:      src
   exposed-modules:     Authenticator
                        Encrypted
-  build-depends:       base >= 4.7 && < 5
+  build-depends:       base >= 4.9 && < 5
                      , aeson
                      , base32string
+                     , bifunctors
                      , binary
                      , bytestring
                      , containers
