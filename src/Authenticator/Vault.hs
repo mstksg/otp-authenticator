@@ -34,7 +34,7 @@ module Authenticator.Vault (
   , otp
   , someotp
   , someSecret
-  , storeSecrets
+  , vaultSecrets
   , describeSecret
   , secretURI
   , parseSecretURI
@@ -193,8 +193,8 @@ data Vault = Vault { vaultList :: [DSum Sing (Secret :&: ModeState)] }
 
 instance B.Binary Vault
 instance J.ToJSON Vault where
-    toEncoding l = J.pairs $ "store" J..= vaultList l
-    toJSON l     = J.object ["store" J..= vaultList l]
+    toEncoding l = J.pairs $ "vault" J..= vaultList l
+    toJSON l     = J.object ["vault" J..= vaultList l]
 
 hotp :: Secret 'HOTP -> ModeState 'HOTP -> (Word32, ModeState 'HOTP)
 hotp Sec{..} (HOTPState i) = (p, HOTPState (i + 1))
@@ -226,12 +226,12 @@ someSecret f = \case
 
 deriving instance (Functor f, Functor g) => Functor (f :.: g)
 
-storeSecrets
+vaultSecrets
     :: Applicative f
     => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m))
     -> Vault
     -> f Vault
-storeSecrets f = (_Vault . traverse) (someSecret f)
+vaultSecrets f = (_Vault . traverse) (someSecret f)
 
 _Vault
     :: Functor f

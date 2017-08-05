@@ -30,10 +30,10 @@ library
   exposed-modules:     Authenticator.Vault
                        Encrypted
                        Authenticator.Common
+                       Authenticator.Actions
                        Authenticator.Options
   build-depends:       base >= 4.9 && < 5
                      , aeson
-                     , unix
                      , base32string
                      , bifunctors
                      , binary
@@ -43,14 +43,18 @@ library
                      , dependent-sum
                      , filepath
                      , h-gpgme
+                     , microlens
                      , one-time-password
                      , optparse-applicative
                      , singletons
                      , text
                      , time
+                     , transformers
                      , trifecta
                      , type-combinators
+                     , unix
                      , uri-encode
+                     , witherable
                      , yaml
   default-language:    Haskell2010
   ghc-options:         -Wall
@@ -61,22 +65,11 @@ executable otp-auth
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
                      , aeson
-                     , base32string
                      , binary
                      , bytestring
-                     , cryptonite
-                     , dependent-sum
-                     , filepath
                      , h-gpgme
-                     , microlens
-                     , optparse-applicative
                      , otp-authenticator
-                     , singletons
                      , text
-                     , transformers
-                     , type-combinators
-                     , unix
-                     , witherable
                      , yaml
   default-language:    Haskell2010
 
