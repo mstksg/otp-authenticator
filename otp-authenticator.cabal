@@ -1,18 +1,16 @@
 name:                otp-authenticator
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            OTP Authenticator (a la google) command line client
 description:         Simple tool for keeping track of your one-time pad
                      two-factor authentication keys; basically a command-line
-                     version of the canonical [Google Authenticator
-                     App][gauth].
+                     version of the canonical
+                     <https://github.com/google/google-authenticator google authenticator app>.
                      .
-                     [gauth]: https://github.com/google/google-authenticator
-                     .
-                     The library uses GnuPG (through *h-gpgme*) to safely
+                     The library uses GnuPG (through /h-gpgme/) to safely
                      encrypt your secret keys. The first time you use it, it
                      asks for a fingerprint to use for encryption. Currently
-                     *GnuPG 1.x* has some issues with *h-gpgme* when asking
-                     for keys, so *GPG 2.x* is recommended.  Keys are stored,
+                     /GnuPG 1.x/ has some issues with /h-gpgme/ when asking
+                     for keys, so /GPG 2.x/ is recommended.  Keys are stored,
                      encrypted, at `~/.otp-auth.vault` by default.
 homepage:            https://github.com/mstksg/otp-authenticator
 license:             BSD3
@@ -24,6 +22,8 @@ category:            CLI, Security
 build-type:          Simple
 extra-source-files:  README.md, CHANGELOG.md
 cabal-version:       >=1.10
+tested-with:         GHC == 8.0.2
+                   , GHC == 8.2.1
 
 library
   hs-source-dirs:      src
