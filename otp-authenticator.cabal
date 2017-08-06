@@ -34,8 +34,8 @@ library
                        Authenticator.Options
   build-depends:       base >= 4.9 && < 5
                      , aeson
-                     -- , base32string
                      , sandi
+                     , haskeline
                      , bifunctors
                      , binary
                      , bytestring

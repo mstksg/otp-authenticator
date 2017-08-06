@@ -37,7 +37,7 @@ import           System.Exit
 import           Text.Printf
 import           Text.Read                  (readMaybe)
 import qualified Data.Text                  as T
-import qualified Data.Text.Encoding         as T
+import qualified System.Console.Haskeline   as L
 
 viewVault
     :: Bool
@@ -73,13 +73,15 @@ addSecret :: Bool -> Vault -> IO Vault
 addSecret u vt = do
     -- TODO: verify b32?
     dsc <- if u
-      then (parseSecretURI <$> query "URI Secret?") >>= \case
-              Left err -> do
-                putStrLn "Parse error:"
-                putStrLn err
-                exitFailure
-              Right d ->
-                return d
+      then do
+        q <- L.runInputT hlSettings $ (fromMaybe "" <$> L.getInputLine "URI Secret?: ")
+        case parseSecretURI q of
+          Left err -> do
+            putStrLn "Parse error:"
+            putStrLn err
+            exitFailure
+          Right d ->
+            return d
       else mkSecret
     putStrLn "Added succesfully!"
     return $
@@ -131,11 +133,12 @@ deleteSecret n vt = do
         i <- state $ \x -> (x :: Int, x + 1)
         if n == i
           then do
-            a <- liftIO . query $ printf "Delete %s? y/[n]" (describeSecret sc)
-            case unwords . words . map toLower $ a of
-              'y':_ -> do
+            lift $ tell (Any True)
+            a <- liftIO . L.runInputT hlSettings $
+                L.getInputChar (printf "Delete %s? y/[n]: " (describeSecret sc))
+            case toLower <$> a of
+              Just 'y' -> do
                 liftIO $ putStrLn "Deleted!"
-                lift $ tell (Any True)
                 return Nothing
               _     -> return (Just ds)
           else return (Just ds)
@@ -145,48 +148,54 @@ deleteSecret n vt = do
     return vt'
 
 mkSecret :: IO (DSum Sing (Secret :&: ModeState))
-mkSecret = do
-    a <- query "Account?"
-    i <- query "Issuer? (optional)"
-    k <- query "Secret?"
-    m <- query "[t]ime- or (c)ounter-based?"
-    let i' = mfilter (not . null) (Just i)
-        k' = decodePad . T.encodeUtf8
-           . T.pack
-           . filter isAlphaNum
-           $ k
+mkSecret = L.runInputT hlSettings $ do
+    a <- (mfilter (not . null) <$> L.getInputLine "Account?: ") >>= \case
+      Nothing -> liftIO $ putStrLn "Account required" >> exitFailure
+      Just r  -> return r
+    i <- L.getInputLine "Issuer? (optional): "
+    k <- fromMaybe "" <$> L.getInputLine "Secret?: "
+    m <- L.getInputChar "[t]ime- or (c)ounter-based?: "
+    let i' = mfilter (not . null) i
+        k' = decodePad . T.pack $ k
         s  = Sec (T.pack a) (T.pack <$> i') HASHA1 6 <$> k'
-    case m of
-      'c':_ -> do
-        n <- query "Initial counter? [0]"
-        n' <- if null n
-          then return 0
-          else case readMaybe n of
-                 Just r -> return r
-                 Nothing -> putStrLn "Invalid initial counter.  Using 0." $> 0
+    case toLower <$> m of
+      Just 'c' -> do
+        n <- mfilter (not . null) <$> L.getInputLine "Initial counter? [0]: "
+        n' <- case n of
+          Nothing -> return 0
+          Just n' -> case readMaybe n' of
+            Just r -> return r
+            Nothing -> liftIO $ putStrLn "Invalid initial counter.  Using 0." $> 0
         case s of
-          Nothing -> do
+          Nothing -> liftIO $ do
             printf "Invalid secret key: %s\n" k
             exitFailure
           Just s' -> return $ SHOTP :=> s' :&: HOTPState n'
       _ -> do
         case s of
-          Nothing -> do
+          Nothing -> liftIO $ do
             printf "Invalid secret key: %s\n" k
             exitFailure
           Just s' -> return $ STOTP :=> s' :&: TOTPState
 
 mkSecretFrom :: Secret m -> IO (Secret m)
-mkSecretFrom sc = do
-    a <- query $ printf "Account? [%s]" (secAccount sc)
-    i <- query $ printf "Issuer?%s (optional)" (case secIssuer sc of
-                                                  Nothing -> ""
-                                                  Just si -> " [" <> si <> "]"
-                                               )
-    let a' | null a    = secAccount sc
-           | otherwise = T.pack a
-        i' | null i    = secIssuer sc
-           | otherwise = Just $ T.pack i
+mkSecretFrom sc = L.runInputT hlSettings $ do
+    a <- mfilter (not . null) <$> L.getInputLineWithInitial "Account?: " (T.unpack (secAccount sc), "")
+    -- a <- L.getInputLineWithInitial "Account?: " (secAccount sc, "")
+    -- query $ printf "Account? [%s]" (secAccount sc)
+    i <- mfilter (not . null) <$> case secIssuer sc of
+           Nothing -> L.getInputLine "Issuer? (optional): "
+           Just si -> L.getInputLineWithInitial "Issuer? (optional): " (T.unpack si, "")
+    -- query $ printf "Issuer?%s (optional)" (case secIssuer sc of
+    --                                               Nothing -> ""
+    --                                               Just si -> " [" <> si <> "]"
+    --                                            )
+    let a' = case a of
+               Nothing -> secAccount sc
+               Just r  -> T.pack r
+        i' = case i of
+               Nothing -> secIssuer sc
+               Just r  -> Just $ T.pack r
     return $ sc { secAccount = a'
                 , secIssuer  = i'
                 }

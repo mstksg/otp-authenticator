@@ -16,21 +16,22 @@ import           Data.Functor
 import           Data.Maybe
 import           Data.Monoid
 import           Data.String
-import           GHC.Generics                  (Generic)
-import           Options.Applicative hiding    (str)
-import           Prelude hiding                (filter)
+import           GHC.Generics               (Generic)
+import           Options.Applicative hiding (str)
+import           Prelude hiding             (filter)
 import           System.FilePath
 import           System.IO.Error
 import           System.Posix.User
 import           Text.Printf
-import qualified Crypto.Gpgme                  as G
-import qualified Data.Aeson                    as J
-import qualified Data.Aeson.Types              as J
-import qualified Data.ByteString               as BS
-import qualified Data.Text                     as T
-import qualified Data.Text.Encoding            as T
-import qualified Data.Yaml                     as Y
-import qualified Options.Applicative           as O
+import qualified Crypto.Gpgme               as G
+import qualified Data.Aeson                 as J
+import qualified Data.Aeson.Types           as J
+import qualified Data.ByteString            as BS
+import qualified Data.Text                  as T
+import qualified Data.Text.Encoding         as T
+import qualified Data.Yaml                  as Y
+import qualified Options.Applicative        as O
+import qualified System.Console.Haskeline   as L
 
 
 data DumpType = DTYaml | DTJSON
@@ -188,7 +189,7 @@ getOptions = do
         printf "Config file not found; generating default file at %s\n" oConfig'
         fing <- case oFingerprint of
           Just p  -> return $ Just (T.decodeUtf8 p)
-          Nothing -> mfilter (not . T.null) . Just . T.pack <$> query "Fingerprint?"
+          Nothing -> L.runInputT hlSettings $ fmap T.pack <$> L.getInputLine "Fingerprint? "
         Y.encodeFile oConfig' $ Conf fing (Just vault)
         return fing
       else

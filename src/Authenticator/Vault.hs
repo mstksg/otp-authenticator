@@ -38,9 +38,9 @@ module Authenticator.Vault (
   , describeSecret
   , secretURI
   , parseSecretURI
-  , decodePad
   ) where
 
+import           Authenticator.Common
 import           Control.Applicative
 import           Control.Monad
 import           Crypto.Hash.Algorithms
@@ -255,8 +255,8 @@ secretURI = do
     ps <- M.fromList <$> param `P.sepBy` P.char '&'
     sec <- case M.lookup "secret" ps of
       Nothing -> fail "Required parameter 'secret' not present"
-      Just (T.concat.T.words->s) ->
-        case decodePad (T.encodeUtf8 s) of
+      Just s ->
+        case decodePad s of
           Just s' -> return s'
           Nothing -> fail $ "Not a valid base-32 string: " ++ T.unpack s
     let dig = fromMaybe 6 $ do
@@ -316,10 +316,3 @@ parseSecretURI
 parseSecretURI s = case P.parseString secretURI mempty s of
     P.Success r -> Right r
     P.Failure e -> Left (show e)
-
-decodePad :: BS.ByteString -> Maybe BS.ByteString
-decodePad s = either (const Nothing) Just
-            . B32.decode
-            $ s <> BS.replicate ((8 - BS.length s) `mod` 8) p
-  where
-    p = fromIntegral $ ord '='
