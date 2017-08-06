@@ -4,6 +4,22 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 
+-- |
+-- Module      : Authenticator.Actions
+-- Description : Simple CLI actions for 'Vault's.
+-- Copyright   : (c) Justin Le 2017
+-- License     : MIT
+-- Maintainer  : justin@jle.im
+-- Stability   : unstable
+-- Portability : portable
+--
+-- Basic actions to manipulate 'Vault's.  The @otp-auth@ executable is
+-- a thin wrapper over these actions.
+--
+-- See 'Cmd'.
+--
+
+
 module Authenticator.Actions (
     viewVault
   , addSecret
@@ -39,9 +55,10 @@ import           Text.Read                  (readMaybe)
 import qualified Data.Text                  as T
 import qualified System.Console.Haskeline   as L
 
+-- | View secrets, generating codes for time-based keys.
 viewVault
-    :: Bool
-    -> Either Int (Maybe T.Text, Maybe T.Text)
+    :: Bool                                     -- ^ List key names only; do not generate any codes.
+    -> Either Int (Maybe T.Text, Maybe T.Text)  -- ^ Filter by ID or possibly by account name and issuer
     -> Vault
     -> IO ()
 viewVault l filts vt = do
@@ -69,7 +86,12 @@ viewVault l filts vt = do
       Left i   -> printf "ID %d not found!\n" i *> exitFailure
       Right _  -> putStrLn "No matches found!"
 
-addSecret :: Bool -> Bool -> Vault -> IO Vault
+-- | Add a secret, interactively.
+addSecret
+    :: Bool         -- ^ Echo back password entry
+    -> Bool         -- ^ If 'True', add via otpauth protocol URI
+    -> Vault
+    -> IO Vault
 addSecret echoPass u vt = do
     -- TODO: verify b32?
     dsc <- if u
@@ -90,7 +112,12 @@ addSecret echoPass u vt = do
     return $
       vt & _Vault %~ (++ [dsc])
 
-genSecret :: Int -> Vault -> IO (Maybe (String, Vault))
+-- | Generate a secret code, forcing a new HOTP code if it is
+-- counter-based.
+genSecret
+    :: Int      -- ^ ID # of secret to generate
+    -> Vault
+    -> IO (Maybe (String, Vault))
 genSecret n vt = do
     res <- runMaybeT . runWriterT . forOf (_Vault . ix (n - 1)) vt $ \case
       s :=> sc :&: ms -> 
@@ -112,7 +139,11 @@ genSecret n vt = do
           printf "No item with ID %d found.\n" n
           exitFailure
 
-editSecret :: Int -> Vault -> IO Vault
+-- | Edit a secret's metadata (account name, issuer)
+editSecret
+    :: Int      -- ^ ID # of secret to edit
+    -> Vault
+    -> IO Vault
 editSecret n vt = do
     (vt', found) <- runWriterT . forOf (_Vault . ix (n - 1)) vt $ \case
       (s :=> sc :&: ms) -> do
@@ -129,7 +160,11 @@ editSecret n vt = do
         printf "%s edited successfuly!\n" desc
         return vt'
 
-deleteSecret :: Int -> Vault -> IO Vault
+-- | Delete a secret.
+deleteSecret
+    :: Int          -- ^ ID # of secret to delete
+    -> Vault
+    -> IO Vault
 deleteSecret n vt = do
     (vt', found) <- runWriterT . flip evalStateT 1 . forOf (_Vault . wither) vt $ \case
       ds@(_ :=> sc :&: _) -> do
@@ -150,7 +185,7 @@ deleteSecret n vt = do
       exitFailure
     return vt'
 
-mkSecret :: Bool -> IO (DSum Sing (Secret :&: ModeState))
+mkSecret :: Bool -> IO SomeSecretState
 mkSecret echoPass = L.runInputT hlSettings $ do
     a <- (mfilter (not . null) <$> L.getInputLine "Account?: ") >>= \case
       Nothing -> liftIO $ putStrLn "Account required" >> exitFailure

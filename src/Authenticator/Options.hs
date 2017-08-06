@@ -3,6 +3,19 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections   #-}
 
+-- |
+-- Module      : Authenticator.Options
+-- Description : Options for the @otp-auth@ executable
+-- Copyright   : (c) Justin Le 2017
+-- License     : MIT
+-- Maintainer  : justin@jle.im
+-- Stability   : unstable
+-- Portability : portable
+--
+-- Load options for the @otp-auth@ executable.
+--
+
+
 module Authenticator.Options (
     Cmd(..)
   , DumpType(..)
@@ -34,8 +47,10 @@ import qualified Options.Applicative        as O
 import qualified System.Console.Haskeline   as L
 
 
+-- | Should the data dump be yaml, or json?
 data DumpType = DTYaml | DTJSON
 
+-- | A command to exercute.  See "Authenticator.Actions".
 data Cmd = Add Bool
          | View Bool (Either Int (Maybe T.Text, Maybe T.Text))
          | Gen Int
