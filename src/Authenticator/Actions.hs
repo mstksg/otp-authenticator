@@ -69,12 +69,15 @@ viewVault l filts vt = do
       Left i   -> printf "ID %d not found!\n" i *> exitFailure
       Right _  -> putStrLn "No matches found!"
 
-addSecret :: Bool -> Vault -> IO Vault
-addSecret u vt = do
+addSecret :: Bool -> Bool -> Vault -> IO Vault
+addSecret echoPass u vt = do
     -- TODO: verify b32?
     dsc <- if u
       then do
-        q <- L.runInputT hlSettings $ (fromMaybe "" <$> L.getInputLine "URI Secret?: ")
+        q <- L.runInputT hlSettings $
+          fromMaybe "" <$> if echoPass
+                             then L.getInputLine "URI Secret?: "
+                             else L.getPassword (Just '*') "URI Secret?: "
         case parseSecretURI q of
           Left err -> do
             putStrLn "Parse error:"
@@ -82,7 +85,7 @@ addSecret u vt = do
             exitFailure
           Right d ->
             return d
-      else mkSecret
+      else mkSecret echoPass
     putStrLn "Added succesfully!"
     return $
       vt & _Vault %~ (++ [dsc])
@@ -147,13 +150,15 @@ deleteSecret n vt = do
       exitFailure
     return vt'
 
-mkSecret :: IO (DSum Sing (Secret :&: ModeState))
-mkSecret = L.runInputT hlSettings $ do
+mkSecret :: Bool -> IO (DSum Sing (Secret :&: ModeState))
+mkSecret echoPass = L.runInputT hlSettings $ do
     a <- (mfilter (not . null) <$> L.getInputLine "Account?: ") >>= \case
       Nothing -> liftIO $ putStrLn "Account required" >> exitFailure
       Just r  -> return r
     i <- L.getInputLine "Issuer? (optional): "
-    k <- fromMaybe "" <$> L.getInputLine "Secret?: "
+    k <- fromMaybe "" <$> if echoPass
+                            then L.getInputLine "Secret?: "
+                            else L.getPassword (Just '*') "Secret?: "
     m <- L.getInputChar "[t]ime- or (c)ounter-based?: "
     let i' = mfilter (not . null) i
         k' = decodePad . T.pack $ k
@@ -181,15 +186,9 @@ mkSecret = L.runInputT hlSettings $ do
 mkSecretFrom :: Secret m -> IO (Secret m)
 mkSecretFrom sc = L.runInputT hlSettings $ do
     a <- mfilter (not . null) <$> L.getInputLineWithInitial "Account?: " (T.unpack (secAccount sc), "")
-    -- a <- L.getInputLineWithInitial "Account?: " (secAccount sc, "")
-    -- query $ printf "Account? [%s]" (secAccount sc)
     i <- mfilter (not . null) <$> case secIssuer sc of
            Nothing -> L.getInputLine "Issuer? (optional): "
            Just si -> L.getInputLineWithInitial "Issuer? (optional): " (T.unpack si, "")
-    -- query $ printf "Issuer?%s (optional)" (case secIssuer sc of
-    --                                               Nothing -> ""
-    --                                               Just si -> " [" <> si <> "]"
-    --                                            )
     let a' = case a of
                Nothing -> secAccount sc
                Just r  -> T.pack r

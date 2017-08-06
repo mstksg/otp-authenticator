@@ -47,11 +47,12 @@ data Opts = Opts { oFingerprint :: Maybe BS.ByteString
                  , oVault       :: Maybe FilePath
                  , oConfig      :: Maybe FilePath
                  , oGPG         :: FilePath
+                 , oEchoPass    :: Bool
                  , oCmd         :: Cmd
                  }
 
-data Config = Conf { cFingerprint :: Maybe T.Text
-                   , cVault       :: Maybe FilePath
+data Config = Conf { cFingerprint  :: Maybe T.Text
+                   , cVault        :: Maybe FilePath
                    }
   deriving (Generic)
 
@@ -92,20 +93,24 @@ parseOpts = Opts <$> optional (
                               <> showDefaultWith id
                               <> help ".gnupg file"
                                )
+                 <*> switch ( long "echo"
+                           <> short 'e'
+                           <> help "Visible (echoing) password entry mode"
+                            )
                  <*> subparser ( command "add"  (info (parseAdd <**> helper)
-                                                      (progDesc "Add a thing")
+                                                      (progDesc "Add an OTP key")
                                                 )
                               <> command "view" (info (parseView <**> helper)
-                                                      (progDesc "View the things")
+                                                      (progDesc "View keys (with optional filter or specific ID)")
                                                 )
                               <> command "gen"  (info (parseGen <**> helper)
-                                                      (progDesc "Generate OTP for specific item # (use view to list items)")
+                                                      (progDesc "Generate code for specific key #, for use with counter-based keys.")
                                                 )
                               <> command "edit" (info (parseEdit <**> helper)
-                                                      (progDesc "Edit a thing")
+                                                      (progDesc "Edit a key")
                                                 )
                               <> command "delete" (info (parseDelete <**> helper)
-                                                      (progDesc "Delete a thing")
+                                                      (progDesc "Delete a key")
                                                 )
                               <> command "dump" (info (parseDump <**> helper)
                                                       (progDesc "Dump all data as json")
@@ -150,8 +155,8 @@ parseOpts = Opts <$> optional (
                                            <> help "Yaml output"
                                             )
 
--- | Return command, vault filepath, and fingerprint
-getOptions :: IO (Cmd, FilePath, Maybe G.Fpr)
+-- | Return command, visible password entry, vault filepath, and fingerprint
+getOptions :: IO (Cmd, Bool, FilePath, Maybe G.Fpr)
 getOptions = do
     Opts{..} <- execParser $ info (parseOpts <**> helper)
                                 ( fullDesc
@@ -197,7 +202,7 @@ getOptions = do
 
     let fingerprint = oFingerprint <|> (T.encodeUtf8 <$> cFingerprint')
 
-    return (oCmd, vault, fingerprint)
+    return (oCmd, oEchoPass, vault, fingerprint)
 
 -- | is str from optparse-applicative 0.14 and above
 str :: IsString s => ReadM s

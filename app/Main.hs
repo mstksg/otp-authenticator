@@ -6,26 +6,6 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 
--- import           Authenticator.Common
--- import           Control.Monad.IO.Class
--- import           Control.Monad.Trans.Class
--- import           Control.Monad.Trans.Maybe
--- import           Control.Monad.Trans.State
--- import           Control.Monad.Trans.Writer
--- import           Data.Char
--- import           Data.Dependent.Sum
--- import           Data.Foldable
--- import           Data.Monoid
--- import           Data.Semigroup
--- import           Data.Singletons
--- import           Data.String
--- import           Data.Type.Conjunction
--- import           Data.Witherable
--- import           Lens.Micro
--- import           Options.Applicative
--- import           Text.Read                  (readMaybe)
--- import qualified Data.Base32String.Default  as B32
--- import qualified Data.Text                  as T
 import           Authenticator.Actions
 import           Authenticator.Options
 import           Authenticator.Vault
@@ -50,7 +30,7 @@ import qualified Data.Yaml                     as Y
 
 main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
-    (cmd, vault, fingerprint) <- getOptions
+    (cmd, echoPass, vault, fingerprint) <- getOptions
 
     k <- for fingerprint $ \fing -> do
       G.getKey ctx fing G.NoSecret >>= \case
@@ -78,7 +58,7 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
         Nothing -> do
           putStrLn "Adding a key requires a fingerprint."
           exitFailure
-        Just k' -> Just <$> overEnc ctx k' e (addSecret u)
+        Just k' -> Just <$> overEnc ctx k' e (addSecret echoPass u)
       Gen n -> do
         vtmsg <- genSecret n =<< getEnc ctx e
         forM vtmsg $ \(s, vt) -> do

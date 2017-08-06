@@ -144,20 +144,20 @@ instance J.ToJSON (Secret m) where
        <> maybe mempty ("issuer" J..=) secIssuer
        <> "algorithm" J..= secAlgo
        <> "digits"    J..= secDigits
-       <> "key"       J..= toText' (B32.encode secKey)
+       <> "key"       J..= formatKey 4 (T.decodeUtf8 (B32.encode secKey))
         )
     toJSON (Sec{..}) = J.object $
         [ "account"   J..= secAccount
         , "algorithm" J..= secAlgo
         , "digits"    J..= secDigits
-        , "key"       J..= toText' (B32.encode secKey)
+        , "key"       J..= formatKey 4 (T.decodeUtf8 (B32.encode secKey))
         ] ++ maybe [] ((:[]) . ("issuer" J..=)) secIssuer
 
-toText' :: BS.ByteString -> T.Text
-toText' = T.unwords
-        . T.chunksOf 4
-        . T.map toLower
-        . T.decodeUtf8
+formatKey :: Int -> T.Text -> T.Text
+formatKey c = T.unwords
+          . T.chunksOf c
+          . T.map toLower
+          . T.filter isAlphaNum
 
 describeSecret :: Secret m -> T.Text
 describeSecret s = secAccount s <> case secIssuer s of
@@ -199,27 +199,28 @@ instance J.ToJSON Vault where
     toEncoding l = J.pairs $ "vault" J..= vaultList l
     toJSON l     = J.object ["vault" J..= vaultList l]
 
-hotp :: Secret 'HOTP -> ModeState 'HOTP -> (String, ModeState 'HOTP)
-hotp Sec{..} (HOTPState i) = (printf fmt p, HOTPState (i + 1))
+hotp :: Secret 'HOTP -> ModeState 'HOTP -> (T.Text, ModeState 'HOTP)
+hotp Sec{..} (HOTPState i) =
+    (formatKey 3 . T.pack $ printf fmt p, HOTPState (i + 1))
   where
     fmt = "%0" ++ show secDigits ++ "d"
     p = hashAlgo secAlgo >>~ \(I a) -> OTP.hotp a secKey i secDigits
 
-totp_ :: Secret 'TOTP -> UTCTime -> String
-totp_ Sec{..} t = hashAlgo secAlgo >>~ \(I a) ->
+totp_ :: Secret 'TOTP -> UTCTime -> T.Text
+totp_ Sec{..} t = hashAlgo secAlgo >>~ \(I a) -> formatKey 3 . T.pack $
     printf fmt $ OTP.totp a secKey (30 `addUTCTime` t) 30 secDigits
   where
     fmt = "%0" ++ show secDigits ++ "d"
 
-totp :: Secret 'TOTP -> IO String
+totp :: Secret 'TOTP -> IO T.Text
 totp s = totp_ s <$> getCurrentTime
 
-otp :: forall m. SingI m => Secret m -> ModeState m -> IO (String, ModeState m)
+otp :: forall m. SingI m => Secret m -> ModeState m -> IO (T.Text, ModeState m)
 otp = case sing @_ @m of
     SHOTP -> curry $ return . uncurry hotp
     STOTP -> curry $ bitraverse totp return
 
-someotp :: DSum Sing (Secret :&: ModeState) -> IO (String, DSum Sing (Secret :&: ModeState))
+someotp :: DSum Sing (Secret :&: ModeState) -> IO (T.Text, DSum Sing (Secret :&: ModeState))
 someotp = getComp . someSecret (\s -> Comp . otp s)
 
 someSecret
