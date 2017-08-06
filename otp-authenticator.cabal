@@ -20,7 +20,7 @@ license-file:        LICENSE
 author:              Justin Le
 maintainer:          justin@jle.im
 copyright:           (c) Justin Le 2017
-category:            CLI
+category:            CLI, Security
 build-type:          Simple
 extra-source-files:  README.md, CHANGELOG.md
 cabal-version:       >=1.10
@@ -34,7 +34,8 @@ library
                        Authenticator.Options
   build-depends:       base >= 4.9 && < 5
                      , aeson
-                     , base32string
+                     -- , base32string
+                     , sandi
                      , bifunctors
                      , binary
                      , bytestring

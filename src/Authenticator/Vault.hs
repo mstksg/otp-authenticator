@@ -38,6 +38,7 @@ module Authenticator.Vault (
   , describeSecret
   , secretURI
   , parseSecretURI
+  , decodePad
   ) where
 
 import           Control.Applicative
@@ -55,19 +56,21 @@ import           Data.Time.Clock
 import           Data.Type.Combinator
 import           Data.Type.Conjunction
 import           Data.Word
-import           GHC.Generics              (Generic)
-import           Text.Read                 (readMaybe)
+import           GHC.Generics           (Generic)
+import           Text.Printf
+import           Text.Read              (readMaybe)
 import           Type.Class.Higher
 import           Type.Class.Witness
-import qualified Data.Aeson                as J
-import qualified Data.Base32String.Default as B32
-import qualified Data.Binary               as B
-import qualified Data.ByteString           as BS
-import qualified Data.Map                  as M
-import qualified Data.OTP                  as OTP
-import qualified Data.Text                 as T
-import qualified Network.URI.Encode        as U
-import qualified Text.Trifecta             as P
+import qualified Codec.Binary.Base32    as B32
+import qualified Data.Aeson             as J
+import qualified Data.Binary            as B
+import qualified Data.ByteString        as BS
+import qualified Data.Map               as M
+import qualified Data.OTP               as OTP
+import qualified Data.Text              as T
+import qualified Data.Text.Encoding     as T
+import qualified Network.URI.Encode     as U
+import qualified Text.Trifecta          as P
 
 $(singletons [d|
   data Mode = HOTP | TOTP
@@ -141,20 +144,20 @@ instance J.ToJSON (Secret m) where
        <> maybe mempty ("issuer" J..=) secIssuer
        <> "algorithm" J..= secAlgo
        <> "digits"    J..= secDigits
-       <> "key"       J..= toText' (B32.fromBytes secKey)
+       <> "key"       J..= toText' (B32.encode secKey)
         )
     toJSON (Sec{..}) = J.object $
         [ "account"   J..= secAccount
         , "algorithm" J..= secAlgo
         , "digits"    J..= secDigits
-        , "key"       J..= toText' (B32.fromBytes secKey)
+        , "key"       J..= toText' (B32.encode secKey)
         ] ++ maybe [] ((:[]) . ("issuer" J..=)) secIssuer
 
-toText' :: B32.Base32String -> T.Text
+toText' :: BS.ByteString -> T.Text
 toText' = T.unwords
         . T.chunksOf 4
         . T.map toLower
-        . B32.toText
+        . T.decodeUtf8
 
 describeSecret :: Secret m -> T.Text
 describeSecret s = secAccount s <> case secIssuer s of
@@ -196,24 +199,27 @@ instance J.ToJSON Vault where
     toEncoding l = J.pairs $ "vault" J..= vaultList l
     toJSON l     = J.object ["vault" J..= vaultList l]
 
-hotp :: Secret 'HOTP -> ModeState 'HOTP -> (Word32, ModeState 'HOTP)
-hotp Sec{..} (HOTPState i) = (p, HOTPState (i + 1))
+hotp :: Secret 'HOTP -> ModeState 'HOTP -> (String, ModeState 'HOTP)
+hotp Sec{..} (HOTPState i) = (printf fmt p, HOTPState (i + 1))
   where
+    fmt = "%0" ++ show secDigits ++ "d"
     p = hashAlgo secAlgo >>~ \(I a) -> OTP.hotp a secKey i secDigits
 
-totp_ :: Secret 'TOTP -> UTCTime -> Word32
+totp_ :: Secret 'TOTP -> UTCTime -> String
 totp_ Sec{..} t = hashAlgo secAlgo >>~ \(I a) ->
-    OTP.totp a secKey (30 `addUTCTime` t) 30 secDigits
+    printf fmt $ OTP.totp a secKey (30 `addUTCTime` t) 30 secDigits
+  where
+    fmt = "%0" ++ show secDigits ++ "d"
 
-totp :: Secret 'TOTP -> IO Word32
+totp :: Secret 'TOTP -> IO String
 totp s = totp_ s <$> getCurrentTime
 
-otp :: forall m. SingI m => Secret m -> ModeState m -> IO (Word32, ModeState m)
+otp :: forall m. SingI m => Secret m -> ModeState m -> IO (String, ModeState m)
 otp = case sing @_ @m of
     SHOTP -> curry $ return . uncurry hotp
     STOTP -> curry $ bitraverse totp return
 
-someotp :: DSum Sing (Secret :&: ModeState) -> IO (Word32, DSum Sing (Secret :&: ModeState))
+someotp :: DSum Sing (Secret :&: ModeState) -> IO (String, DSum Sing (Secret :&: ModeState))
 someotp = getComp . someSecret (\s -> Comp . otp s)
 
 someSecret
@@ -249,9 +255,10 @@ secretURI = do
     ps <- M.fromList <$> param `P.sepBy` P.char '&'
     sec <- case M.lookup "secret" ps of
       Nothing -> fail "Required parameter 'secret' not present"
-      Just (T.concat.T.words->s)
-        | T.all (`elem` b32s) (T.map toUpper s) -> return $ B32.fromText s
-        | otherwise -> fail $ "Not a valid base-32 string: " ++ T.unpack s
+      Just (T.concat.T.words->s) ->
+        case decodePad (T.encodeUtf8 s) of
+          Just s' -> return s'
+          Nothing -> fail $ "Not a valid base-32 string: " ++ T.unpack s
     let dig = fromMaybe 6 $ do
           d <- M.lookup "digits" ps
           readMaybe @Word $ T.unpack d
@@ -260,7 +267,7 @@ secretURI = do
           al <- M.lookup "algorithm" ps
           parseAlgo . T.unpack . T.map toLower $ al
         secr :: forall m. Secret m
-        secr = Sec a i' alg dig (B32.toBytes sec)
+        secr = Sec a i' alg dig sec
 
     withSomeSing m $ \case
       SHOTP -> case M.lookup "counter" ps of
@@ -270,7 +277,6 @@ secretURI = do
             Just c' -> return $ SHOTP :=> secr :&: HOTPState c'
       STOTP -> return $ STOTP :=> secr :&: TOTPState
   where
-    b32s = ['A' .. 'Z'] ++ ['2'..'7']
     otpMode :: P.Parser Mode
     otpMode = HOTP <$ P.string "hotp"
           <|> HOTP <$ P.string "HOTP"
@@ -310,3 +316,10 @@ parseSecretURI
 parseSecretURI s = case P.parseString secretURI mempty s of
     P.Success r -> Right r
     P.Failure e -> Left (show e)
+
+decodePad :: BS.ByteString -> Maybe BS.ByteString
+decodePad s = either (const Nothing) Just
+            . B32.decode
+            $ s <> BS.replicate ((8 - BS.length s) `mod` 8) p
+  where
+    p = fromIntegral $ ord '='

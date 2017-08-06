@@ -36,7 +36,6 @@ import           Prelude hiding             (filter)
 import           System.Exit
 import           Text.Printf
 import           Text.Read                  (readMaybe)
-import qualified Data.Base32String.Default  as B32
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 
@@ -62,7 +61,7 @@ viewVault l filts vt = do
                 printf "(%d) %s: [ counter-based, use gen ]\n" i (describeSecret sc)
               STOTP -> do
                 p <- totp sc
-                printf "(%d) %s: %d\n" i (describeSecret sc) p
+                printf "(%d) %s: %s\n" i (describeSecret sc) p
                 return ms
       ) vt
     printf "Searched %d total entries.\n" (n - 1)
@@ -93,13 +92,13 @@ genSecret n vt = do
         case s of
           SHOTP -> do
             let (p, ms') = hotp sc ms
-                out = printf "(%d) %s: %d\n" n (describeSecret sc) p
+                out = printf "(%d) %s: %s\n" n (describeSecret sc) p
             tell (First (Just out))
             return $ s :=> sc :&: ms'
           STOTP -> do
             liftIO $ do
               p <- totp sc
-              printf "(%d) %s: %d\n" n (describeSecret sc) p
+              printf "(%d) %s: %s\n" n (describeSecret sc) p
             empty
     forM res $ \(r, changed) ->
       case getFirst changed of
@@ -152,15 +151,11 @@ mkSecret = do
     k <- query "Secret?"
     m <- query "[t]ime- or (c)ounter-based?"
     let i' = mfilter (not . null) (Just i)
-        k' = B32.toBytes . B32.b32String' . T.encodeUtf8
+        k' = decodePad . T.encodeUtf8
            . T.pack
            . filter isAlphaNum
            $ k
-        s  = Sec (T.pack a)
-                 (T.pack <$> i')
-                 HASHA1
-                 6
-                 k'
+        s  = Sec (T.pack a) (T.pack <$> i') HASHA1 6 <$> k'
     case m of
       'c':_ -> do
         n <- query "Initial counter? [0]"
@@ -169,8 +164,17 @@ mkSecret = do
           else case readMaybe n of
                  Just r -> return r
                  Nothing -> putStrLn "Invalid initial counter.  Using 0." $> 0
-        return $ SHOTP :=> s :&: HOTPState n'
-      _ -> return $ STOTP :=> s :&: TOTPState
+        case s of
+          Nothing -> do
+            printf "Invalid secret key: %s\n" k
+            exitFailure
+          Just s' -> return $ SHOTP :=> s' :&: HOTPState n'
+      _ -> do
+        case s of
+          Nothing -> do
+            printf "Invalid secret key: %s\n" k
+            exitFailure
+          Just s' -> return $ STOTP :=> s' :&: TOTPState
 
 mkSecretFrom :: Secret m -> IO (Secret m)
 mkSecretFrom sc = do
