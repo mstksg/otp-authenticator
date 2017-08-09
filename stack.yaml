@@ -16,7 +16,7 @@
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
 # resolver: nightly-2017-08-01
-resolver: lts-9.0
+resolver: nightly-2017-08-08
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -48,6 +48,7 @@ extra-deps:
 - h-gpgme-0.4.0.0
 - bindings-gpgme-0.1.6
 - type-combinators-0.2.4.3
+- sandi-0.4.1
 # - openpgp-0.6.1
 # - bzlib-0.5.0.5
 
