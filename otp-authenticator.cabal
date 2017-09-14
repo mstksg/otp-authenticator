@@ -45,7 +45,7 @@ library
                      , filepath
                      , h-gpgme
                      , microlens
-                     , one-time-password
+                     , one-time-password   == 2.0.0
                      , optparse-applicative
                      , singletons
                      , text

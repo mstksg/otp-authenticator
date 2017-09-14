@@ -249,7 +249,7 @@ hotp Sec{..} (HOTPState i) =
 -- | (Purely) generate a TOTP (time-based) code, for a given time.
 totp_ :: Secret 'TOTP -> UTCTime -> T.Text
 totp_ Sec{..} t = hashAlgo secAlgo >>~ \(I a) -> formatKey 3 . T.pack $
-    printf fmt $ OTP.totp a secKey (30 `addUTCTime` t) 30 secDigits
+    printf fmt $ OTP.totp a secKey (90 `addUTCTime` t) 30 secDigits
   where
     fmt = "%0" ++ show secDigits ++ "d"
 
