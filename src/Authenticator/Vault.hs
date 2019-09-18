@@ -2,9 +2,10 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
-{-# LANGUAGE KindSignatures       #-}
 {-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE NoImplicitPrelude    #-}
 {-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE PatternSynonyms      #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -16,7 +17,6 @@
 {-# LANGUAGE TypeInType           #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE ViewPatterns         #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- |
 -- Module      : Authenticator.Vault
@@ -58,25 +58,23 @@ module Authenticator.Vault (
 
 import           Authenticator.Common
 import           Control.Applicative
-import           Control.Monad
+import           Control.Monad hiding (fail)
 import           Crypto.Hash.Algorithms
 import           Data.Bitraversable
 import           Data.Char
 import           Data.Dependent.Sum
 import           Data.Kind
 import           Data.Maybe
-import           Data.Semigroup
 import           Data.Singletons
+import           Prelude.Compat
 import           Data.Singletons.TH
+import           Data.Some
 import           Data.Time.Clock
-import           Data.Type.Combinator
-import           Data.Type.Conjunction
+import           Data.Vinyl
 import           Data.Word
-import           GHC.Generics           (Generic)
+import           GHC.Generics
 import           Text.Printf
 import           Text.Read              (readMaybe)
-import           Type.Class.Higher
-import           Type.Class.Witness
 import qualified Codec.Binary.Base32    as B32
 import qualified Data.Aeson             as J
 import qualified Data.Binary            as B
@@ -123,10 +121,10 @@ instance J.ToJSON (ModeState 'HOTP) where
 
 instance J.ToJSON (ModeState 'TOTP)
 
-modeStateBinary :: Sing m -> Wit1 B.Binary (ModeState m)
+modeStateBinary :: Sing m -> DictOnly B.Binary (ModeState m)
 modeStateBinary = \case
-    SHOTP -> Wit1
-    STOTP -> Wit1
+    SHOTP -> DictOnly
+    STOTP -> DictOnly
 
 -- | Which OTP-approved hash algorithm to use?
 data HashAlgo = HASHA1 | HASHA256 | HASHA512
@@ -139,10 +137,10 @@ instance J.ToJSON HashAlgo where
     toJSON HASHA512 = J.toJSON @T.Text "sha512"
 
 -- | Generate the /cryptonite/ 'HashAlgorithm' instance.
-hashAlgo :: HashAlgo -> SomeC HashAlgorithm I
-hashAlgo HASHA1   = SomeC (I SHA1  )
-hashAlgo HASHA256 = SomeC (I SHA256)
-hashAlgo HASHA512 = SomeC (I SHA512)
+hashAlgo :: HashAlgo -> Some (Dict HashAlgorithm)
+hashAlgo HASHA1   = Some $ Dict SHA1
+hashAlgo HASHA256 = Some $ Dict SHA256
+hashAlgo HASHA512 = Some $ Dict SHA512
 
 -- | Parse a hash algorithm string into the appropriate 'HashAlgo'.
 parseAlgo :: String -> Maybe HashAlgo
@@ -201,25 +199,27 @@ describeSecret s = secAccount s <> case secIssuer s of
 instance B.Binary SomeSecretState where
     get = do
       m <- B.get
-      withSomeSing m $ \s -> modeStateBinary s // do
-        sc <- B.get
-        ms <- B.get
-        return $ s :=> sc :&: ms
+      withSomeSing m $ \s -> case modeStateBinary s of
+        DictOnly -> do
+          sc <- B.get
+          ms <- B.get
+          return $ s :=> sc :*: ms
     put = \case
-      s :=> sc :&: ms -> modeStateBinary s // do
-        B.put $ fromSing s
-        B.put sc
-        B.put ms
+      s :=> sc :*: ms -> case modeStateBinary s of
+        DictOnly -> do
+          B.put $ fromSing s
+          B.put sc
+          B.put ms
 
 instance J.ToJSON SomeSecretState where
-    toEncoding (s :=> sc :&: ms) = J.pairs
+    toEncoding (s :=> sc :*: ms) = J.pairs
         ( "type"   J..= fromSing s
        <> "secret" J..= sc
        <> (case s of SHOTP -> "state" J..= ms
                      STOTP -> mempty
           )
         )
-    toJSON (s :=> sc :&: ms) = J.object $
+    toJSON (s :=> sc :*: ms) = J.object $
         [ "type"   J..= fromSing s
         , "secret" J..= sc
         ] ++ case s of SHOTP -> ["state" J..= ms]
@@ -227,7 +227,7 @@ instance J.ToJSON SomeSecretState where
 
 -- | A 'Secret' coupled with its 'ModeState', existentially quantified over
 -- its 'Mode'.
-type SomeSecretState = DSum SMode (Secret :&: ModeState)
+type SomeSecretState = DSum SMode (Secret :*: ModeState)
 
 -- | A list of secrets and their states, of various modes.
 data Vault = Vault { vaultList :: [SomeSecretState] }
@@ -244,12 +244,14 @@ hotp Sec{..} (HOTPState i) =
     (formatKey 3 . T.pack $ printf fmt p, HOTPState (i + 1))
   where
     fmt = "%0" ++ show secDigits ++ "d"
-    p = hashAlgo secAlgo >>~ \(I a) -> OTP.hotp a secKey i secDigits
+    p = withSome (hashAlgo secAlgo) $ \case
+      Dict a -> OTP.hotp a secKey i secDigits
 
 -- | (Purely) generate a TOTP (time-based) code, for a given time.
 totp_ :: Secret 'TOTP -> UTCTime -> T.Text
-totp_ Sec{..} t = hashAlgo secAlgo >>~ \(I a) -> formatKey 3 . T.pack $
-    printf fmt $ OTP.totp a secKey (90 `addUTCTime` t) 30 secDigits
+totp_ Sec{..} t = withSome (hashAlgo secAlgo) $ \case
+    Dict a -> formatKey 3 . T.pack $
+      printf fmt $ OTP.totp a secKey (90 `addUTCTime` t) 30 secDigits
   where
     fmt = "%0" ++ show secDigits ++ "d"
 
@@ -259,7 +261,7 @@ totp s = totp_ s <$> getCurrentTime
 
 -- | Abstract over both 'hotp' and 'totp'.
 otp :: forall m. SingI m => Secret m -> ModeState m -> IO (T.Text, ModeState m)
-otp = case sing @_ @m of
+otp = case sing :: Sing m of
     SHOTP -> curry $ return . uncurry hotp
     STOTP -> curry $ bitraverse totp return
 
@@ -275,9 +277,7 @@ someSecret
     -> SomeSecretState
     -> f SomeSecretState
 someSecret f = \case
-    s :=> (sc :&: ms) -> withSingI s $ ((s :=>) . (sc :&:)) <$> f sc ms
-
-deriving instance (Functor f, Functor g) => Functor (f :.: g)
+    s :=> (sc :*: ms) -> withSingI s $ (s :=>) . (sc :*:) <$> f sc ms
 
 -- | A RankN traversal over all of the 'Secret's and 'ModeState's in
 -- a 'Vault'.
@@ -326,8 +326,8 @@ secretURI = do
           Nothing -> fail "Paramater 'counter' required for hotp mode"
           Just (T.unpack->c) -> case readMaybe c of
             Nothing -> fail $ "Could not parse 'counter' parameter: " ++ c
-            Just c' -> return $ SHOTP :=> secr :&: HOTPState c'
-      STOTP -> return $ STOTP :=> secr :&: TOTPState
+            Just c' -> return $ SHOTP :=> secr :*: HOTPState c'
+      STOTP -> return $ STOTP :=> secr :*: TOTPState
   where
     otpMode :: P.Parser Mode
     otpMode = HOTP <$ P.string "hotp"

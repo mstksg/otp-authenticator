@@ -38,7 +38,6 @@ import           System.Posix.User
 import           Text.Printf
 import qualified Crypto.Gpgme               as G
 import qualified Data.Aeson                 as J
-import qualified Data.Aeson.Types           as J
 import qualified Data.ByteString            as BS
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
@@ -186,7 +185,7 @@ getOptions = do
         return $ homeDirectory ue </> ".otp-auth.yaml"
 
     (Conf{..}, mkNewConf) <- do
-      (c0, mkNew) <- ((, False) . Y.decodeEither <$> BS.readFile oConfig') `catch` \e ->
+      (c0, mkNew) <- fmap (,False) (Y.decodeFileThrow oConfig') `catch` \e ->
         if isDoesNotExistError e
           then return (Right (Conf Nothing Nothing), True)
           else throwIO e

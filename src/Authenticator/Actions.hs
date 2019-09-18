@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -28,6 +29,7 @@ module Authenticator.Actions (
   , deleteSecret
   ) where
 
+-- import           Data.Type.Conjunction
 import           Authenticator.Common
 import           Authenticator.Vault
 import           Control.Monad
@@ -44,8 +46,8 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.Singletons
 import           Data.String
-import           Data.Type.Conjunction
 import           Data.Witherable
+import           GHC.Generics
 import           Lens.Micro
 import           Options.Applicative
 import           Prelude hiding             (filter)
@@ -73,7 +75,7 @@ viewVault l filts vt = do
           lift . lift $ tell (Any True)
           liftIO $ if l
             then printf "(%d) %s\n" i (describeSecret sc) $> ms
-            else case sing @_ @m of
+            else case sing :: Sing m of
               SHOTP -> ms <$
                 printf "(%d) %s: [ counter-based, use gen ]\n" i (describeSecret sc)
               STOTP -> do
@@ -120,13 +122,13 @@ genSecret
     -> IO (Maybe (String, Vault))
 genSecret n vt = do
     res <- runMaybeT . runWriterT . forOf (_Vault . ix (n - 1)) vt $ \case
-      s :=> sc :&: ms -> 
+      s :=> sc :*: ms -> 
         case s of
           SHOTP -> do
             let (p, ms') = hotp sc ms
                 out = printf "(%d) %s: %s\n" n (describeSecret sc) p
             tell (First (Just out))
-            return $ s :=> sc :&: ms'
+            return $ s :=> sc :*: ms'
           STOTP -> do
             liftIO $ do
               p <- totp sc
@@ -146,12 +148,12 @@ editSecret
     -> IO Vault
 editSecret n vt = do
     (vt', found) <- runWriterT . forOf (_Vault . ix (n - 1)) vt $ \case
-      (s :=> sc :&: ms) -> do
+      (s :=> sc :*: ms) -> do
         sc' <- liftIO $ do
           printf "Editing (%d) %s ...\n" n (describeSecret sc)
           liftIO (mkSecretFrom sc)
         tell (First (Just (describeSecret sc')))
-        return $ s :=> sc' :&: ms
+        return $ s :=> sc' :*: ms
     case getFirst found of
       Nothing -> do
         printf "No item with ID %d found.\n" n
@@ -167,7 +169,7 @@ deleteSecret
     -> IO Vault
 deleteSecret n vt = do
     (vt', found) <- runWriterT . flip evalStateT 1 . forOf (_Vault . wither) vt $ \case
-      ds@(_ :=> sc :&: _) -> do
+      ds@(_ :=> sc :*: _) -> do
         i <- state $ \x -> (x :: Int, x + 1)
         if n == i
           then do
@@ -197,6 +199,7 @@ mkSecret echoPass = L.runInputT hlSettings $ do
     m <- L.getInputChar "[t]ime- or (c)ounter-based?: "
     let i' = mfilter (not . null) i
         k' = decodePad . T.pack $ k
+        s :: Maybe (Secret m)
         s  = Sec (T.pack a) (T.pack <$> i') HASHA1 6 <$> k'
     case toLower <$> m of
       Just 'c' -> do
@@ -210,13 +213,12 @@ mkSecret echoPass = L.runInputT hlSettings $ do
           Nothing -> liftIO $ do
             printf "Invalid secret key: %s\n" k
             exitFailure
-          Just s' -> return $ SHOTP :=> s' :&: HOTPState n'
-      _ -> do
-        case s of
-          Nothing -> liftIO $ do
-            printf "Invalid secret key: %s\n" k
-            exitFailure
-          Just s' -> return $ STOTP :=> s' :&: TOTPState
+          Just s' -> return $ SHOTP :=> s' :*: HOTPState n'
+      _ -> case s of
+        Nothing -> liftIO $ do
+          printf "Invalid secret key: %s\n" k
+          exitFailure
+        Just s' -> return $ STOTP :=> (s' :*: TOTPState)
 
 mkSecretFrom :: Secret m -> IO (Secret m)
 mkSecretFrom sc = L.runInputT hlSettings $ do

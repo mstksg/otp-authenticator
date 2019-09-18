@@ -1,0 +1,102 @@
+name: otp-authenticator
+version: '0.1.0.1'
+synopsis: OTP Authenticator (a la google) command line client
+description: ! 'Simple tool for keeping track of your one-time pad
+
+  two-factor authentication keys; basically a command-line
+
+  version of the canonical
+
+  <https://github.com/google/google-authenticator google authenticator app>.
+
+
+  The library uses GnuPG (through /h-gpgme/) to safely
+
+  encrypt your secret keys. The first time you use it, it
+
+  asks for a fingerprint to use for encryption. Currently
+
+  /GnuPG 1.x/ has some issues with /h-gpgme/ when asking
+
+  for keys, so /GPG 2.x/ is recommended.  Keys are stored,
+
+  encrypted, at `~/.otp-auth.vault` by default.'
+
+category: CLI, Security
+author: Justin Le
+maintainer: justin@jle.im
+copyright: (c) Justin Le 2017
+license: BSD3
+github: mstksg/otp-authenticator
+
+tested-with: GHC >= 8.0 && < 8.8
+
+extra-source-files:
+- README.md
+- CHANGELOG.md
+
+ghc-options:
+- -Wall
+- -Werror=incomplete-patterns
+- -Wredundant-constraints
+- -Wcompat
+
+dependencies:
+- aeson
+- base >=4.9 && <5
+- binary
+- bytestring
+- h-gpgme
+- text
+- yaml >= 0.8.31
+
+library:
+  source-dirs: src
+  exposed-modules:
+  - Authenticator.Vault
+  - Encrypted
+  - Authenticator.Common
+  - Authenticator.Actions
+  - Authenticator.Options
+  dependencies:
+  - base-compat >= 0.10
+  - containers
+  - cryptonite
+  - dependent-sum
+  - filepath
+  - haskeline
+  - microlens
+  - one-time-password >= 2
+  - optparse-applicative
+  - sandi
+  - singletons
+  - time
+  - transformers
+  - trifecta
+  - unix
+  - uri-encode
+  - vinyl >= 0.10
+  - witherable
+
+executables:
+  otp-auth:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - otp-authenticator
+
+# tests:
+#   otp-authenticator-test:
+#     main: Spec.hs
+#     source-dirs: test
+#     ghc-options:
+#     - -threaded
+#     - -rtsopts
+#     - -with-rtsopts=-N
+#     dependencies:
+#     - base
+#     - otp-authenticator

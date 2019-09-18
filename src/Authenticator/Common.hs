@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
@@ -21,7 +22,7 @@ module Authenticator.Common (
 
 import           Control.Monad.IO.Class
 import           Data.Char
-import           Data.Semigroup
+import           Prelude.Compat
 import qualified Codec.Binary.Base32      as B32
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as T
