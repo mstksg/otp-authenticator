@@ -29,7 +29,6 @@ module Authenticator.Actions (
   , deleteSecret
   ) where
 
--- import           Data.Type.Conjunction
 import           Authenticator.Common
 import           Authenticator.Vault
 import           Control.Monad
@@ -46,7 +45,6 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.Singletons
 import           Data.String
-import           Data.Witherable
 import           GHC.Generics
 import           Lens.Micro
 import           Options.Applicative
@@ -186,6 +184,8 @@ deleteSecret n vt = do
       printf "No item with ID %d found.\n" n
       exitFailure
     return vt'
+  where
+    wither f = fmap catMaybes . traverse f
 
 mkSecret :: Bool -> IO SomeSecretState
 mkSecret echoPass = L.runInputT hlSettings $ do

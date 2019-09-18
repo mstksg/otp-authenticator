@@ -72,11 +72,10 @@ library:
   - singletons
   - time
   - transformers
-  - trifecta
+  - megaparsec
   - unix
   - uri-encode
   - vinyl >= 0.10
-  - witherable
 
 executables:
   otp-auth:

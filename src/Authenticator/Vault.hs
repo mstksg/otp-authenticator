@@ -58,21 +58,22 @@ module Authenticator.Vault (
 
 import           Authenticator.Common
 import           Control.Applicative
-import           Control.Monad hiding (fail)
+import           Control.Monad hiding   (fail)
 import           Crypto.Hash.Algorithms
+import           Data.Bifunctor
 import           Data.Bitraversable
 import           Data.Char
 import           Data.Dependent.Sum
 import           Data.Kind
 import           Data.Maybe
 import           Data.Singletons
-import           Prelude.Compat
 import           Data.Singletons.TH
 import           Data.Some
 import           Data.Time.Clock
 import           Data.Vinyl
 import           Data.Word
 import           GHC.Generics
+import           Prelude.Compat
 import           Text.Printf
 import           Text.Read              (readMaybe)
 import qualified Codec.Binary.Base32    as B32
@@ -84,7 +85,8 @@ import qualified Data.OTP               as OTP
 import qualified Data.Text              as T
 import qualified Data.Text.Encoding     as T
 import qualified Network.URI.Encode     as U
-import qualified Text.Trifecta          as P
+import qualified Text.Megaparsec        as P
+import qualified Text.Megaparsec.Char   as P
 
 -- | OTP generation mode
 data Mode
@@ -297,8 +299,10 @@ _Vault
     -> f Vault
 _Vault f s = Vault <$> f (vaultList s)
 
+type Parser = P.Parsec Void String
+
 -- | A parser for a otpauth URI.
-secretURI :: P.Parser SomeSecretState
+secretURI :: Parser SomeSecretState
 secretURI = do
     _ <- P.string "otpauth://"
     m <- otpMode
@@ -329,12 +333,12 @@ secretURI = do
             Just c' -> return $ SHOTP :=> secr :*: HOTPState c'
       STOTP -> return $ STOTP :=> secr :*: TOTPState
   where
-    otpMode :: P.Parser Mode
+    otpMode :: Parser Mode
     otpMode = HOTP <$ P.string "hotp"
           <|> HOTP <$ P.string "HOTP"
           <|> TOTP <$ P.string "totp"
           <|> TOTP <$ P.string "TOTP"
-    otpLabel :: P.Parser (T.Text, Maybe T.Text)
+    otpLabel :: Parser (T.Text, Maybe T.Text)
     otpLabel = do
       x <- P.some (P.try (mfilter (/= ':') uriChar))
       rest <- Just <$> (colon
@@ -346,7 +350,7 @@ secretURI = do
       return $ case rest of
         Nothing -> (T.pack . U.decode $ x, Nothing)
         Just y  -> (T.pack . U.decode $ y, Just . T.pack . U.decode $ x)
-    param :: P.Parser (T.Text, T.Text)
+    param :: Parser (T.Text, T.Text)
     param = do
       k <- T.map toLower . T.pack <$> P.some (P.try uriChar)
       _ <- P.char '='
@@ -354,7 +358,7 @@ secretURI = do
       return (k, v)
     uriChar = P.satisfy U.isAllowed
           <|> P.char '@'
-          <|> (do x <- U.decode <$> sequence [P.char '%', P.hexDigit, P.hexDigit]
+          <|> (do x <- U.decode <$> sequence [P.char '%', P.hexDigitChar, P.hexDigitChar]
                   case x of
                     [y] -> return y
                     _   -> fail "Invalid URI escape code"
@@ -368,6 +372,5 @@ secretURI = do
 parseSecretURI
     :: String
     -> Either String SomeSecretState
-parseSecretURI s = case P.parseString secretURI mempty s of
-    P.Success r -> Right r
-    P.Failure e -> Left (show e)
+parseSecretURI s = first P.errorBundlePretty $
+    P.parse secretURI "secret URI" s
