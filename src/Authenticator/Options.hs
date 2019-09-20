@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveGeneric    #-}
-{-# LANGUAGE LambdaCase       #-}
 {-# LANGUAGE RecordWildCards  #-}
 {-# LANGUAGE TupleSections    #-}
 {-# LANGUAGE TypeApplications #-}
@@ -142,9 +141,9 @@ parseOpts = Opts <$> optional (
                                <> short 'l'
                                <> help "Only list accounts; do not generate any keys."
                                 )
-                     <*> (Left <$> (argument auto ( metavar "ID"
+                     <*> (Left <$> argument auto ( metavar "ID"
                                                    <> help "Specific ID number of account"
-                                                   ))
+                                                 )
                        <|> Right <$> ((,) <$> optional (option str ( long "account"
                                                         <> short 'a'
                                                         <> metavar "NAME"

@@ -52,6 +52,7 @@ import           Prelude hiding             (filter)
 import           System.Exit
 import           Text.Printf
 import           Text.Read                  (readMaybe)
+import qualified Crypto.OTP                 as OTP
 import qualified Data.Text                  as T
 import qualified System.Console.Haskeline   as L
 
@@ -200,7 +201,7 @@ mkSecret echoPass = L.runInputT hlSettings $ do
     let i' = mfilter (not . null) i
         k' = decodePad . T.pack $ k
         s :: Maybe (Secret m)
-        s  = Sec (T.pack a) (T.pack <$> i') HASHA1 6 <$> k'
+        s  = Sec (T.pack a) (T.pack <$> i') HASHA1 (OTPDigits OTP.OTP6) <$> k'
     case toLower <$> m of
       Just 'c' -> do
         n <- mfilter (not . null) <$> L.getInputLine "Initial counter? [0]: "

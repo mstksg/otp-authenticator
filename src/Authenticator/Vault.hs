@@ -40,7 +40,7 @@ module Authenticator.Vault (
   , SMode, HOTPSym0, TOTPSym0
   , HashAlgo(..)
   , parseAlgo
-  , Secret(..)
+  , Secret(..), OTPDigits(..), pattern OTPDigitsInt
   , ModeState(..)
   , SomeSecretState
   , Vault(..)
@@ -64,12 +64,14 @@ import           Data.Bifunctor
 import           Data.Bitraversable
 import           Data.Char
 import           Data.Dependent.Sum
+import           Data.Function
 import           Data.Kind
 import           Data.Maybe
+import           Data.Ord
 import           Data.Singletons
 import           Data.Singletons.TH
 import           Data.Some
-import           Data.Time.Clock
+import           Data.Time.Clock.POSIX
 import           Data.Vinyl
 import           Data.Word
 import           GHC.Generics
@@ -77,11 +79,12 @@ import           Prelude.Compat
 import           Text.Printf
 import           Text.Read              (readMaybe)
 import qualified Codec.Binary.Base32    as B32
+import qualified Crypto.OTP             as OTP
 import qualified Data.Aeson             as J
 import qualified Data.Binary            as B
 import qualified Data.ByteString        as BS
 import qualified Data.Map               as M
-import qualified Data.OTP               as OTP
+import qualified Data.Set               as S
 import qualified Data.Text              as T
 import qualified Data.Text.Encoding     as T
 import qualified Network.URI.Encode     as U
@@ -117,8 +120,8 @@ data instance ModeState 'TOTP = TOTPState
 instance B.Binary (ModeState 'HOTP)
 instance B.Binary (ModeState 'TOTP)
 instance J.ToJSON (ModeState 'HOTP) where
-    toEncoding (HOTPState{..}) = J.pairs $ "counter" J..= hotpCounter
-    toJSON (HOTPState{..}) = J.object
+    toEncoding HOTPState{..} = J.pairs $ "counter" J..= hotpCounter
+    toJSON HOTPState{..} = J.object
       [ "counter" J..= hotpCounter ]
 
 instance J.ToJSON (ModeState 'TOTP)
@@ -148,10 +151,41 @@ hashAlgo HASHA512 = Some $ Dict SHA512
 parseAlgo :: String -> Maybe HashAlgo
 parseAlgo = (`lookup` algos) . map toLower . unwords . words
   where
-    algos = [("sha1", HASHA1)
+    algos = [("sha1"  , HASHA1  )
             ,("sha256", HASHA256)
             ,("sha512", HASHA512)
             ]
+
+-- | Newtype wrapper to provide 'Eq', 'Ord', 'B.Binary', and 'J.ToJSON'
+-- instances.  You can convert to and from this and the 'Int'
+-- representation using 'OTPDigitsInt'
+newtype OTPDigits = OTPDigits { otpDigits :: OTP.OTPDigits }
+  deriving Show
+
+instance Eq OTPDigits where
+    (==) = (==) `on` show
+
+instance Ord OTPDigits where
+    compare = comparing show
+
+otpDigitsSet :: S.Set OTPDigits
+otpDigitsSet = S.fromList $
+    OTPDigits <$> [OTP.OTP4, OTP.OTP5, OTP.OTP6, OTP.OTP7, OTP.OTP8, OTP.OTP9]
+
+pattern OTPDigitsInt :: OTPDigits -> Int
+pattern OTPDigitsInt o <- ((`safeElemAt` otpDigitsSet) . subtract 4->Just o)
+  where
+    OTPDigitsInt o = S.findIndex o otpDigitsSet + 4
+
+instance B.Binary OTPDigits where
+    get = do
+      OTPDigitsInt o <- B.get
+      pure o
+    put = B.put . OTPDigitsInt
+
+instance J.ToJSON OTPDigits where
+    toEncoding = J.toEncoding . OTPDigitsInt
+    toJSON     = J.toJSON     . OTPDigitsInt
 
 -- | A standards-compliant secret key type.  Well, almost.  It doesn't
 -- include configuration for the time period if it's time-based.
@@ -159,7 +193,7 @@ data Secret :: Mode -> Type where
     Sec :: { secAccount :: T.Text
            , secIssuer  :: Maybe T.Text
            , secAlgo    :: HashAlgo
-           , secDigits  :: Word
+           , secDigits  :: OTPDigits
            , secKey     :: BS.ByteString
            }
         -> Secret m
@@ -167,14 +201,14 @@ data Secret :: Mode -> Type where
 
 instance B.Binary (Secret m)
 instance J.ToJSON (Secret m) where
-    toEncoding (Sec{..}) = J.pairs
+    toEncoding Sec{..} = J.pairs
         ( "account"   J..= secAccount
        <> maybe mempty ("issuer" J..=) secIssuer
        <> "algorithm" J..= secAlgo
        <> "digits"    J..= secDigits
        <> "key"       J..= formatKey 4 (T.decodeUtf8 (B32.encode secKey))
         )
-    toJSON (Sec{..}) = J.object $
+    toJSON Sec{..} = J.object $
         [ "account"   J..= secAccount
         , "algorithm" J..= secAlgo
         , "digits"    J..= secDigits
@@ -232,7 +266,7 @@ instance J.ToJSON SomeSecretState where
 type SomeSecretState = DSum SMode (Secret :*: ModeState)
 
 -- | A list of secrets and their states, of various modes.
-data Vault = Vault { vaultList :: [SomeSecretState] }
+newtype Vault = Vault { vaultList :: [SomeSecretState] }
   deriving Generic
 
 instance B.Binary Vault
@@ -245,21 +279,25 @@ hotp :: Secret 'HOTP -> ModeState 'HOTP -> (T.Text, ModeState 'HOTP)
 hotp Sec{..} (HOTPState i) =
     (formatKey 3 . T.pack $ printf fmt p, HOTPState (i + 1))
   where
-    fmt = "%0" ++ show secDigits ++ "d"
+    fmt = "%0" ++ show (OTPDigitsInt secDigits) ++ "d"
     p = withSome (hashAlgo secAlgo) $ \case
-      Dict a -> OTP.hotp a secKey i secDigits
+      Dict a -> OTP.hotp a (otpDigits secDigits) secKey i
 
 -- | (Purely) generate a TOTP (time-based) code, for a given time.
-totp_ :: Secret 'TOTP -> UTCTime -> T.Text
+totp_ :: Secret 'TOTP -> POSIXTime -> T.Text
 totp_ Sec{..} t = withSome (hashAlgo secAlgo) $ \case
-    Dict a -> formatKey 3 . T.pack $
-      printf fmt $ OTP.totp a secKey (90 `addUTCTime` t) 30 secDigits
+    Dict a ->
+      let Right tparam =
+            OTP.mkTOTPParams a 0 30 (otpDigits secDigits) OTP.TwoSteps
+      in  formatKey 3 . T.pack $
+            printf fmt $
+              OTP.totp tparam secKey (round t)
   where
-    fmt = "%0" ++ show secDigits ++ "d"
+    fmt = "%0" ++ show (OTPDigitsInt secDigits) ++ "d"
 
 -- | Generate a TOTP (time-based) code in IO for the current time.
 totp :: Secret 'TOTP -> IO T.Text
-totp s = totp_ s <$> getCurrentTime
+totp s = totp_ s <$> getPOSIXTime
 
 -- | Abstract over both 'hotp' and 'totp'.
 otp :: forall m. SingI m => Secret m -> ModeState m -> IO (T.Text, ModeState m)
@@ -315,9 +353,10 @@ secretURI = do
         case decodePad s of
           Just s' -> return s'
           Nothing -> fail $ "Not a valid base-32 string: " ++ T.unpack s
-    let dig = fromMaybe 6 $ do
-          d <- M.lookup "digits" ps
-          readMaybe @Word $ T.unpack d
+    let dig = fromMaybe (OTPDigits OTP.OTP6) $ do
+          d             <- M.lookup "digits" ps
+          OTPDigitsInt o <- readMaybe $ T.unpack d
+          pure o
         i' = i <|> M.lookup "issuer" ps
         alg = fromMaybe HASHA1 $ do
           al <- M.lookup "algorithm" ps
@@ -374,3 +413,9 @@ parseSecretURI
     -> Either String SomeSecretState
 parseSecretURI s = first P.errorBundlePretty $
     P.parse secretURI "secret URI" s
+
+safeElemAt :: Int -> S.Set a -> Maybe a
+safeElemAt i s
+  | i < S.size s = Just (S.elemAt i s)
+  | otherwise    = Nothing
+

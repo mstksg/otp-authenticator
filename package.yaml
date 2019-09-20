@@ -66,7 +66,6 @@ library:
   - filepath
   - haskeline
   - microlens
-  - one-time-password >= 2
   - optparse-applicative
   - sandi
   - singletons

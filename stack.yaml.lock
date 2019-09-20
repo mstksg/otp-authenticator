@@ -68,12 +68,19 @@ packages:
   original:
     hackage: libyaml-0.1.1.0
 - completed:
-    hackage: one-time-password-2.0.0@sha256:9da17e88b6e57282cd436d2eb9a7683385dd4b594d45930d46f7215c2a964f39,1782
+    hackage: megaparsec-7.0.5@sha256:45e1f1348fab2783646fdb4d9e6097568981a740951c7356d36d794e2baba305,3902
     pantry-tree:
-      size: 371
-      sha256: 18e141978cfd5676bd8e5f33a9f88b8839a3ff7942cc619e20899c4b7c3d4c62
+      size: 1428
+      sha256: 1f8baf6e07326f8c8a2dd31de6b2860427f158b0892c52ba5fe9ffeb6cd3bf7f
   original:
-    hackage: one-time-password-2.0.0
+    hackage: megaparsec-7.0.5
+- completed:
+    hackage: parser-combinators-1.2.0@sha256:784ab858e0a814d2aa36785e3c359a393be7ef7be9a37428a59908331249eb80,1845
+    pantry-tree:
+      size: 725
+      sha256: 2bc4acaba61498d2f8d1eefcaeb557e8612cb2058918203fddc7f1595966b11b
+  original:
+    hackage: parser-combinators-1.2.0
 - completed:
     hackage: resourcet-1.2.2@sha256:8cd361114a67a1e18303569b022d39875eb38f91d5176b657f22b16866ccc395,1655
     pantry-tree:
@@ -109,20 +116,6 @@ packages:
       sha256: 67fa65b246192799aa7a4ac5471dfcc3c665beda50300c3a6717670deb20b912
   original:
     hackage: yaml-0.11.1.2
-- completed:
-    hackage: megaparsec-7.0.5@sha256:45e1f1348fab2783646fdb4d9e6097568981a740951c7356d36d794e2baba305,3902
-    pantry-tree:
-      size: 1428
-      sha256: 1f8baf6e07326f8c8a2dd31de6b2860427f158b0892c52ba5fe9ffeb6cd3bf7f
-  original:
-    hackage: megaparsec-7.0.5
-- completed:
-    hackage: parser-combinators-1.2.0@sha256:784ab858e0a814d2aa36785e3c359a393be7ef7be9a37428a59908331249eb80,1845
-    pantry-tree:
-      size: 725
-      sha256: 2bc4acaba61498d2f8d1eefcaeb557e8612cb2058918203fddc7f1595966b11b
-  original:
-    hackage: parser-combinators-1.2.0
 snapshots:
 - completed:
     size: 529130
