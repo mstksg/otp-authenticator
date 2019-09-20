@@ -1,7 +1,8 @@
-{-# LANGUAGE DeriveGeneric   #-}
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TupleSections   #-}
+{-# LANGUAGE DeriveGeneric    #-}
+{-# LANGUAGE LambdaCase       #-}
+{-# LANGUAGE RecordWildCards  #-}
+{-# LANGUAGE TupleSections    #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- |
 -- Module      : Authenticator.Options
@@ -71,7 +72,9 @@ data Config = Conf { cFingerprint  :: Maybe T.Text
   deriving (Generic)
 
 confJsonOpts :: J.Options
-confJsonOpts = J.defaultOptions { J.fieldLabelModifier = J.camelTo2 '-' . drop 1 }
+confJsonOpts = J.defaultOptions
+    { J.fieldLabelModifier = J.camelTo2 '-' . drop 1
+    }
 instance J.FromJSON Config where
     parseJSON  = J.genericParseJSON  confJsonOpts
 instance J.ToJSON Config where
@@ -185,14 +188,14 @@ getOptions = do
         return $ homeDirectory ue </> ".otp-auth.yaml"
 
     (Conf{..}, mkNewConf) <- do
-      (c0, mkNew) <- fmap (,False) (Y.decodeFileThrow oConfig') `catch` \e ->
+      (c0, mkNew) <- fmap (,False) (Y.decodeFileEither @Config oConfig') `catch` \e ->
         if isDoesNotExistError e
           then return (Right (Conf Nothing Nothing), True)
           else throwIO e
       case c0 of
         Left e -> do
           putStrLn "Could not parse configuration file.  Ignoring."
-          putStrLn e
+          putStrLn . Y.prettyPrintParseException $ e
           return (Conf Nothing Nothing, False)
         Right c1 -> return (c1, mkNew)
 

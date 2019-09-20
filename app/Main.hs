@@ -32,13 +32,11 @@ main :: IO ()
 main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
     (cmd, echoPass, vault, fingerprint) <- getOptions
 
-    k <- for fingerprint $ \fing -> do
-      G.getKey ctx fing G.NoSecret >>= \case
-        Nothing -> do
-          printf "No key found for fingerprint %s!\n" (T.decodeUtf8 fing)
-          exitFailure
-        Just k' -> return k'
-
+    k <- for fingerprint $ \fing -> G.getKey ctx fing G.NoSecret >>= \case
+      Nothing -> do
+        printf "No key found for fingerprint %s!\n" (T.decodeUtf8 fing)
+        exitFailure
+      Just k' -> return k'
 
     (e, mkNewVault) <- ((,False) <$> B.decodeFile @(Enc Vault) vault) `catch` \e ->
       if isDoesNotExistError e
@@ -61,14 +59,13 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
         Just k' -> Just <$> overEnc ctx k' e (addSecret echoPass u)
       Gen n -> do
         vtmsg <- genSecret n =<< getEnc ctx e
-        forM vtmsg $ \(s, vt) -> do
-          case k of
-            Nothing -> do
-              putStrLn "Generating a counter-based (HOTP) key requires a fingerprint."
-              exitFailure
-            Just k' -> do
-              putStrLn s
-              mkEnc ctx k' vt
+        forM vtmsg $ \(s, vt) -> case k of
+          Nothing -> do
+            putStrLn "Generating a counter-based (HOTP) key requires a fingerprint."
+            exitFailure
+          Just k' -> do
+            putStrLn s
+            mkEnc ctx k' vt
       Edit n -> case k of
         Nothing -> do
           putStrLn "Editing keys requires a fingerprint."

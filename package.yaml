@@ -72,7 +72,7 @@ library:
   - singletons
   - time
   - transformers
-  - megaparsec
+  - megaparsec >= 7.0
   - unix
   - uri-encode
   - vinyl >= 0.10
