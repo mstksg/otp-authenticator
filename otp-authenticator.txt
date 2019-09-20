@@ -14,7 +14,7 @@
 --   <i>h-gpgme</i> when asking for keys, so <i>GPG 2.x</i> is recommended.
 --   Keys are stored, encrypted, at `~/.otp-auth.vault` by default.
 @package otp-authenticator
-@version 0.1.0.1
+@version 0.1.1.0
 
 
 -- | Common utility functions and values used throughout the library.
@@ -86,7 +86,15 @@ parseAlgo :: String -> Maybe HashAlgo
 -- | A standards-compliant secret key type. Well, almost. It doesn't
 --   include configuration for the time period if it's time-based.
 data Secret :: Mode -> Type
-[Sec] :: {secAccount :: Text, secIssuer :: Maybe Text, secAlgo :: HashAlgo, secDigits :: Word, secKey :: ByteString} -> Secret m
+[Sec] :: {secAccount :: Text, secIssuer :: Maybe Text, secAlgo :: HashAlgo, secDigits :: OTPDigits, secKey :: ByteString} -> Secret m
+
+-- | Newtype wrapper to provide <a>Eq</a>, <a>Ord</a>, <a>Binary</a>, and
+--   <a>ToJSON</a> instances. You can convert to and from this and the
+--   <a>Int</a> representation using <a>OTPDigitsInt</a>
+newtype OTPDigits
+OTPDigits :: OTPDigits -> OTPDigits
+[otpDigits] :: OTPDigits -> OTPDigits
+pattern OTPDigitsInt :: OTPDigits -> Int
 
 -- | A data family consisting of the state required by each mode.
 data family ModeState :: Mode -> Type
@@ -96,7 +104,7 @@ data family ModeState :: Mode -> Type
 type SomeSecretState = DSum SMode (Secret :*: ModeState)
 
 -- | A list of secrets and their states, of various modes.
-data Vault
+newtype Vault
 Vault :: [SomeSecretState] -> Vault
 [vaultList] :: Vault -> [SomeSecretState]
 
@@ -111,7 +119,7 @@ hotp :: Secret  'HOTP -> ModeState  'HOTP -> (Text, ModeState  'HOTP)
 totp :: Secret  'TOTP -> IO Text
 
 -- | (Purely) generate a TOTP (time-based) code, for a given time.
-totp_ :: Secret  'TOTP -> UTCTime -> Text
+totp_ :: Secret  'TOTP -> POSIXTime -> Text
 
 -- | Abstract over both <a>hotp</a> and <a>totp</a>.
 otp :: forall m. SingI m => Secret m -> ModeState m -> IO (Text, ModeState m)
@@ -142,6 +150,7 @@ parseSecretURI :: String -> Either String SomeSecretState
 instance GHC.Generics.Generic Authenticator.Vault.Vault
 instance GHC.Show.Show (Authenticator.Vault.Secret a)
 instance GHC.Generics.Generic (Authenticator.Vault.Secret a)
+instance GHC.Show.Show Authenticator.Vault.OTPDigits
 instance GHC.Show.Show Authenticator.Vault.HashAlgo
 instance GHC.Generics.Generic Authenticator.Vault.HashAlgo
 instance GHC.Show.Show (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
@@ -154,6 +163,10 @@ instance Data.Binary.Class.Binary Authenticator.Vault.SomeSecretState
 instance Data.Aeson.Types.ToJSON.ToJSON Authenticator.Vault.SomeSecretState
 instance Data.Binary.Class.Binary (Authenticator.Vault.Secret m)
 instance Data.Aeson.Types.ToJSON.ToJSON (Authenticator.Vault.Secret m)
+instance GHC.Classes.Eq Authenticator.Vault.OTPDigits
+instance GHC.Classes.Ord Authenticator.Vault.OTPDigits
+instance Data.Binary.Class.Binary Authenticator.Vault.OTPDigits
+instance Data.Aeson.Types.ToJSON.ToJSON Authenticator.Vault.OTPDigits
 instance Data.Binary.Class.Binary Authenticator.Vault.HashAlgo
 instance Data.Aeson.Types.ToJSON.ToJSON Authenticator.Vault.HashAlgo
 instance Data.Binary.Class.Binary (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
