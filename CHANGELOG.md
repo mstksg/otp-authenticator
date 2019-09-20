@@ -1,3 +1,11 @@
+Version 0.1.1.0
+================
+
+<https://github.com/mstksg/uncertain/releases/tag/v0.1.1.0>
+
+*   Major cleanup of dependencies and underlying implementation
+*   Fix bug based on dependencies that caused codes to generate improperly.
+
 Version 0.1.0.1
 ================
 

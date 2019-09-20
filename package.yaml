@@ -1,5 +1,5 @@
 name: otp-authenticator
-version: '0.1.0.1'
+version: 0.1.1.0
 synopsis: OTP Authenticator (a la google) command line client
 description: ! 'Simple tool for keeping track of your one-time pad
 
@@ -29,7 +29,7 @@ copyright: (c) Justin Le 2017
 license: BSD3
 github: mstksg/otp-authenticator
 
-tested-with: GHC >= 8.0 && < 8.8
+tested-with: GHC >= 8.2 && < 8.8
 
 extra-source-files:
 - README.md
@@ -43,7 +43,7 @@ ghc-options:
 
 dependencies:
 - aeson
-- base >=4.9 && <5
+- base >=4.10 && <5
 - binary
 - bytestring
 - h-gpgme
