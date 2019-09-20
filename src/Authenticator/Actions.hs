@@ -2,7 +2,6 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
 
 -- |
@@ -99,6 +98,7 @@ addSecret echoPass u vt = do
           fromMaybe "" <$> if echoPass
                              then L.getInputLine "URI Secret?: "
                              else L.getPassword (Just '*') "URI Secret?: "
+        putStrLn "parsing"
         case parseSecretURI q of
           Left err -> do
             putStrLn "Parse error:"
@@ -119,7 +119,7 @@ genSecret
     -> IO (Maybe (String, Vault))
 genSecret n vt = do
     res <- runMaybeT . runWriterT . forOf (_Vault . ix (n - 1)) vt $ \case
-      s :=> sc :*: ms -> 
+      s :=> sc :*: ms ->
         case s of
           SHOTP -> do
             let (p, ms') = hotp sc ms

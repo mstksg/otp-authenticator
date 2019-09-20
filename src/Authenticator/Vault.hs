@@ -1,22 +1,19 @@
-{-# LANGUAGE DeriveFunctor        #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE NoImplicitPrelude    #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE PatternSynonyms      #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TemplateHaskell      #-}
-{-# LANGUAGE TupleSections        #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeInType           #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE ViewPatterns         #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternSynonyms     #-}
+{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving  #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeInType          #-}
+{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 -- |
 -- Module      : Authenticator.Vault
@@ -54,8 +51,6 @@ module Authenticator.Vault (
   , parseSecretURI
   ) where
 
--- import           Data.Singletons
--- import           Data.Singletons.TH
 import           Authenticator.Common
 import           Control.Applicative
 import           Control.Monad hiding   (fail)
@@ -65,6 +60,7 @@ import           Data.Bitraversable
 import           Data.Char
 import           Data.Dependent.Sum
 import           Data.Function
+import           Data.GADT.Show
 import           Data.Kind
 import           Data.Maybe
 import           Data.Ord
@@ -102,6 +98,11 @@ data Mode
 data SMode :: Mode -> Type where
     SHOTP :: SMode 'HOTP
     STOTP :: SMode 'TOTP
+
+deriving instance Show (SMode m)
+
+instance GShow SMode where
+    gshowsPrec = showsPrec
 
 instance B.Binary Mode
 instance J.ToJSON Mode where
@@ -363,7 +364,7 @@ secretURI = do
     m <- otpMode
     _ <- P.char '/'
     (a,i) <- otpLabel
-    ps <- M.fromList <$> param `P.sepBy` P.char '&'
+    ps  <- M.fromList <$> P.try param `P.sepBy` P.char '&'
     sec <- case M.lookup "secret" ps of
       Nothing -> fail "Required parameter 'secret' not present"
       Just s ->
@@ -396,11 +397,9 @@ secretURI = do
           <|> TOTP <$ P.string "TOTP"
     otpLabel :: Parser (T.Text, Maybe T.Text)
     otpLabel = do
-      x <- P.some (P.try (mfilter (/= ':') uriChar))
-      rest <- Just <$> (colon
-                     *> P.many (P.try uriSpace)
-                     *> P.some (P.try uriChar)
-                     <* P.char '?'
+      x    <- P.some (P.try (mfilter (/= ':') uriChar))
+      rest <- Just <$> ( colon
+                      *> P.manyTill (P.try uriChar <|> uriSpace) (P.char '?')
                        )
           <|> Nothing <$ P.char '?'
       return $ case rest of
@@ -412,15 +411,15 @@ secretURI = do
       _ <- P.char '='
       v <- T.pack <$> P.some (P.try uriChar)
       return (k, v)
-    uriChar = P.satisfy U.isAllowed
+    uriChar = P.try (P.satisfy U.isAllowed)
           <|> P.char '@'
           <|> (do x <- U.decode <$> sequence [P.char '%', P.hexDigitChar, P.hexDigitChar]
                   case x of
                     [y] -> return y
                     _   -> fail "Invalid URI escape code"
               )
-    colon    = void (P.char ':') <|> void (P.string "%3A")
-    uriSpace = void P.space      <|> void (P.string "%20")
+    colon    = void (P.char ':')    <|> void (P.string "%3A")
+    uriSpace = ' ' <$ (void P.space <|> void (P.string "%20"))
 
 -- | Parse a valid otpauth URI and initialize its state.
 --
