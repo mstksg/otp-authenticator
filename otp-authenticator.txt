@@ -164,6 +164,7 @@ instance GHC.Show.Show (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
 instance GHC.Generics.Generic (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
 instance GHC.Show.Show (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
 instance GHC.Generics.Generic (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
+instance GHC.Show.Show (Authenticator.Vault.SMode m)
 instance Data.Binary.Class.Binary Authenticator.Vault.Vault
 instance Data.Aeson.Types.ToJSON.ToJSON Authenticator.Vault.Vault
 instance Data.Binary.Class.Binary Authenticator.Vault.SomeSecretState
@@ -180,6 +181,7 @@ instance Data.Binary.Class.Binary (Authenticator.Vault.ModeState 'Authenticator.
 instance Data.Binary.Class.Binary (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
 instance Data.Aeson.Types.ToJSON.ToJSON (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
 instance Data.Aeson.Types.ToJSON.ToJSON (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
+instance Data.GADT.Show.GShow Authenticator.Vault.SMode
 instance Data.Binary.Class.Binary Authenticator.Vault.Mode
 instance Data.Aeson.Types.ToJSON.ToJSON Authenticator.Vault.Mode
 
