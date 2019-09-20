@@ -43,7 +43,6 @@ import           Data.Foldable
 import           Data.Functor
 import           Data.Maybe
 import           Data.Monoid
-import           Data.Singletons
 import           Data.String
 import           GHC.Generics
 import           Lens.Micro
@@ -63,7 +62,7 @@ viewVault
     -> Vault
     -> IO ()
 viewVault l filts vt = do
-    (n,found) <- runWriterT . flip execStateT 1 $ vaultSecrets (\(sc :: Secret m) ms -> do
+    (n,found) <- runWriterT . (`execStateT` 1) $ (`vaultSecrets` vt) $ \m sc ms -> do
         i <- state $ \x -> (x :: Int, x + 1)
         fmap (fromMaybe ms) . runMaybeT $ do
           case filts of
@@ -74,14 +73,13 @@ viewVault l filts vt = do
           lift . lift $ tell (Any True)
           liftIO $ if l
             then printf "(%d) %s\n" i (describeSecret sc) $> ms
-            else case sing :: Sing m of
+            else case m of
               SHOTP -> ms <$
                 printf "(%d) %s: [ counter-based, use gen ]\n" i (describeSecret sc)
               STOTP -> do
                 p <- totp sc
                 printf "(%d) %s: %s\n" i (describeSecret sc) p
                 return ms
-      ) vt
     printf "Searched %d total entries.\n" (n - 1)
     unless (getAny found) $ case filts of
       Left i   -> printf "ID %d not found!\n" i *> exitFailure

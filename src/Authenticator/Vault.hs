@@ -35,9 +35,7 @@
 
 
 module Authenticator.Vault (
-    Mode(..)
-  , Sing(SHOTP, STOTP)
-  , SMode, HOTPSym0, TOTPSym0
+    Mode(..), SMode(..), withSMode, fromSMode
   , HashAlgo(..)
   , parseAlgo
   , Secret(..), OTPDigits(..), pattern OTPDigitsInt
@@ -56,6 +54,8 @@ module Authenticator.Vault (
   , parseSecretURI
   ) where
 
+-- import           Data.Singletons
+-- import           Data.Singletons.TH
 import           Authenticator.Common
 import           Control.Applicative
 import           Control.Monad hiding   (fail)
@@ -68,11 +68,10 @@ import           Data.Function
 import           Data.Kind
 import           Data.Maybe
 import           Data.Ord
-import           Data.Singletons
-import           Data.Singletons.TH
 import           Data.Some
 import           Data.Time.Clock.POSIX
 import           Data.Vinyl
+import           Data.Void
 import           Data.Word
 import           GHC.Generics
 import           Prelude.Compat
@@ -99,12 +98,30 @@ data Mode
     | TOTP
   deriving (Generic, Show)
 
-genSingletons [''Mode]
+-- | Singleton for 'Mode'
+data SMode :: Mode -> Type where
+    SHOTP :: SMode 'HOTP
+    STOTP :: SMode 'TOTP
 
 instance B.Binary Mode
 instance J.ToJSON Mode where
     toJSON HOTP = J.toJSON @T.Text "hotp"
     toJSON TOTP = J.toJSON @T.Text "totp"
+
+-- | Reify a 'Mode' to its singleton
+withSMode
+    :: Mode
+    -> (forall m. SMode m -> r)
+    -> r
+withSMode = \case
+    HOTP -> ($ SHOTP)
+    TOTP -> ($ STOTP)
+
+-- | Reflect a 'SMode' to its value.
+fromSMode :: SMode m -> Mode
+fromSMode = \case
+    SHOTP -> HOTP
+    STOTP -> TOTP
 
 -- | A data family consisting of the state required by each mode.
 data family ModeState :: Mode -> Type
@@ -126,7 +143,7 @@ instance J.ToJSON (ModeState 'HOTP) where
 
 instance J.ToJSON (ModeState 'TOTP)
 
-modeStateBinary :: Sing m -> DictOnly B.Binary (ModeState m)
+modeStateBinary :: SMode m -> DictOnly B.Binary (ModeState m)
 modeStateBinary = \case
     SHOTP -> DictOnly
     STOTP -> DictOnly
@@ -235,7 +252,7 @@ describeSecret s = secAccount s <> case secIssuer s of
 instance B.Binary SomeSecretState where
     get = do
       m <- B.get
-      withSomeSing m $ \s -> case modeStateBinary s of
+      withSMode m $ \s -> case modeStateBinary s of
         DictOnly -> do
           sc <- B.get
           ms <- B.get
@@ -243,20 +260,20 @@ instance B.Binary SomeSecretState where
     put = \case
       s :=> sc :*: ms -> case modeStateBinary s of
         DictOnly -> do
-          B.put $ fromSing s
+          B.put $ fromSMode s
           B.put sc
           B.put ms
 
 instance J.ToJSON SomeSecretState where
     toEncoding (s :=> sc :*: ms) = J.pairs
-        ( "type"   J..= fromSing s
+        ( "type"   J..= fromSMode s
        <> "secret" J..= sc
        <> (case s of SHOTP -> "state" J..= ms
                      STOTP -> mempty
           )
         )
     toJSON (s :=> sc :*: ms) = J.object $
-        [ "type"   J..= fromSing s
+        [ "type"   J..= fromSMode s
         , "secret" J..= sc
         ] ++ case s of SHOTP -> ["state" J..= ms]
                        STOTP -> []
@@ -300,8 +317,8 @@ totp :: Secret 'TOTP -> IO T.Text
 totp s = totp_ s <$> getPOSIXTime
 
 -- | Abstract over both 'hotp' and 'totp'.
-otp :: forall m. SingI m => Secret m -> ModeState m -> IO (T.Text, ModeState m)
-otp = case sing :: Sing m of
+otp :: SMode m -> Secret m -> ModeState m -> IO (T.Text, ModeState m)
+otp = \case
     SHOTP -> curry $ return . uncurry hotp
     STOTP -> curry $ bitraverse totp return
 
@@ -313,17 +330,17 @@ otp = case sing :: Sing m of
 -- library to update the 'ModeState' in IO.
 someSecret
     :: Functor f
-    => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m))
+    => (forall m. SMode m -> Secret m -> ModeState m -> f (ModeState m))
     -> SomeSecretState
     -> f SomeSecretState
 someSecret f = \case
-    s :=> (sc :*: ms) -> withSingI s $ (s :=>) . (sc :*:) <$> f sc ms
+    s :=> (sc :*: ms) -> (s :=>) . (sc :*:) <$> f s sc ms
 
 -- | A RankN traversal over all of the 'Secret's and 'ModeState's in
 -- a 'Vault'.
 vaultSecrets
     :: Applicative f
-    => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m))
+    => (forall m. SMode m -> Secret m -> ModeState m -> f (ModeState m))
     -> Vault
     -> f Vault
 vaultSecrets f = (_Vault . traverse) (someSecret f)
@@ -364,7 +381,7 @@ secretURI = do
         secr :: forall m. Secret m
         secr = Sec a i' alg dig sec
 
-    withSomeSing m $ \case
+    withSMode m $ \case
       SHOTP -> case M.lookup "counter" ps of
           Nothing -> fail "Paramater 'counter' required for hotp mode"
           Just (T.unpack->c) -> case readMaybe c of

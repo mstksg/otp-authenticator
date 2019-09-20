@@ -68,7 +68,6 @@ library:
   - microlens
   - optparse-applicative
   - sandi
-  - singletons
   - time
   - transformers
   - megaparsec >= 7.0
