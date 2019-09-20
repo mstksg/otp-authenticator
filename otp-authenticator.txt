@@ -68,11 +68,16 @@ HOTP :: Mode
 -- | Time-based
 TOTP :: Mode
 
--- | The singleton kind-indexed data family.
-data family Sing (a :: k) :: Type
-type SMode = (Sing :: Mode -> Type)
-type HOTPSym0 =  'HOTP
-type TOTPSym0 =  'TOTP
+-- | Singleton for <a>Mode</a>
+data SMode :: Mode -> Type
+[SHOTP] :: SMode  'HOTP
+[STOTP] :: SMode  'TOTP
+
+-- | Reify a <a>Mode</a> to its singleton
+withSMode :: Mode -> (forall m. SMode m -> r) -> r
+
+-- | Reflect a <a>SMode</a> to its value.
+fromSMode :: SMode m -> Mode
 
 -- | Which OTP-approved hash algorithm to use?
 data HashAlgo
@@ -122,7 +127,7 @@ totp :: Secret  'TOTP -> IO Text
 totp_ :: Secret  'TOTP -> POSIXTime -> Text
 
 -- | Abstract over both <a>hotp</a> and <a>totp</a>.
-otp :: forall m. SingI m => Secret m -> ModeState m -> IO (Text, ModeState m)
+otp :: SMode m -> Secret m -> ModeState m -> IO (Text, ModeState m)
 
 -- | Some sort of RankN lens and traversal over a <tt>SomeSecret</tt>.
 --   Allows you to traverse (effectfully map) over the <a>ModeState</a> in
@@ -130,11 +135,11 @@ otp :: forall m. SingI m => Secret m -> ModeState m -> IO (Text, ModeState m)
 --   
 --   With this you can implement getters and setters. It's also used by the
 --   library to update the <a>ModeState</a> in IO.
-someSecret :: Functor f => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m)) -> SomeSecretState -> f SomeSecretState
+someSecret :: Functor f => (forall m. SMode m -> Secret m -> ModeState m -> f (ModeState m)) -> SomeSecretState -> f SomeSecretState
 
 -- | A RankN traversal over all of the <a>Secret</a>s and <a>ModeState</a>s
 --   in a <a>Vault</a>.
-vaultSecrets :: Applicative f => (forall m. SingI m => Secret m -> ModeState m -> f (ModeState m)) -> Vault -> f Vault
+vaultSecrets :: Applicative f => (forall m. SMode m -> Secret m -> ModeState m -> f (ModeState m)) -> Vault -> f Vault
 
 -- | Print out the metadata (account name and issuer) of a <a>Secret</a>.
 describeSecret :: Secret m -> Text
@@ -153,6 +158,8 @@ instance GHC.Generics.Generic (Authenticator.Vault.Secret a)
 instance GHC.Show.Show Authenticator.Vault.OTPDigits
 instance GHC.Show.Show Authenticator.Vault.HashAlgo
 instance GHC.Generics.Generic Authenticator.Vault.HashAlgo
+instance GHC.Show.Show Authenticator.Vault.Mode
+instance GHC.Generics.Generic Authenticator.Vault.Mode
 instance GHC.Show.Show (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
 instance GHC.Generics.Generic (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
 instance GHC.Show.Show (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
@@ -173,13 +180,8 @@ instance Data.Binary.Class.Binary (Authenticator.Vault.ModeState 'Authenticator.
 instance Data.Binary.Class.Binary (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
 instance Data.Aeson.Types.ToJSON.ToJSON (Authenticator.Vault.ModeState 'Authenticator.Vault.HOTP)
 instance Data.Aeson.Types.ToJSON.ToJSON (Authenticator.Vault.ModeState 'Authenticator.Vault.TOTP)
-instance Data.Singletons.Internal.SingKind Authenticator.Vault.Mode
-instance Data.Singletons.Internal.SingI 'Authenticator.Vault.HOTP
-instance Data.Singletons.Internal.SingI 'Authenticator.Vault.TOTP
 instance Data.Binary.Class.Binary Authenticator.Vault.Mode
 instance Data.Aeson.Types.ToJSON.ToJSON Authenticator.Vault.Mode
-instance GHC.Show.Show Authenticator.Vault.Mode
-instance GHC.Generics.Generic Authenticator.Vault.Mode
 
 
 -- | Basic actions to manipulate <a>Vault</a>s. The <tt>otp-auth</tt>
