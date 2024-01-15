@@ -1,8 +1,8 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- |
 -- Module      : Authenticator.Actions
@@ -35,6 +35,9 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Writer
 import qualified Crypto.OTP as OTP
+import qualified Data.Aeson as J
+import qualified Data.Aeson.Encoding as J
+import qualified Data.ByteString.Lazy as BSL
 import Data.Char
 import Data.Dependent.Sum
 import Data.Foldable
@@ -43,6 +46,8 @@ import Data.Maybe
 import Data.Monoid
 import Data.String
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import qualified Data.Text.IO as T
 import GHC.Generics
 import Lens.Micro
 import Options.Applicative
@@ -51,6 +56,32 @@ import System.Exit
 import Text.Printf
 import Text.Read (readMaybe)
 import Prelude hiding (filter)
+
+data ViewOut = ViewOut
+  { voId :: Int,
+    voAccount :: T.Text,
+    voIssuer :: Maybe T.Text,
+    voValue :: Maybe T.Text,
+    voMode :: Mode
+  }
+
+instance J.ToJSON ViewOut where
+  toEncoding ViewOut {..} =
+    J.pairs
+      ( "id" J..= voId
+          <> "account" J..= voAccount
+          <> maybe mempty ("issuer" J..=) voIssuer
+          <> maybe mempty ("value" J..=) voValue
+          <> "mode" J..= voMode
+      )
+  toJSON ViewOut {..} =
+    J.object $
+      [ "id" J..= voId,
+        "account" J..= voAccount,
+        "mode" J..= voMode
+      ]
+        ++ maybe [] ((: []) . ("issuer" J..=)) voIssuer
+        ++ maybe [] ((: []) . ("value" J..=)) voValue
 
 -- | View secrets, generating codes for time-based keys.
 viewVault ::
@@ -63,7 +94,7 @@ viewVault ::
   Vault ->
   IO ()
 viewVault l j filts vt = do
-  (n, found) <- runWriterT . (`execStateT` 1) $ (`vaultSecrets` vt) $ \m sc ms -> do
+  (n, res) <- runWriterT . (`execStateT` 1) $ (`vaultSecrets` vt) $ \m sc ms -> do
     i <- state $ \x -> (x :: Int, x + 1)
     fmap (fromMaybe ms) . runMaybeT $ do
       case filts of
@@ -71,22 +102,39 @@ viewVault l j filts vt = do
         Right (fAcc, fIss) -> do
           traverse_ (guard . (== secAccount sc)) fAcc
           traverse_ (guard . (== secIssuer sc) . Just) fIss
-      lift . lift $ tell (Any True)
-      liftIO $
-        if l
-          then printf "(%d) %s\n" i (describeSecret sc) $> ms
-          else case m of
-            SHOTP ->
-              ms
-                <$ printf "(%d) %s: [ counter-based, use gen ]\n" i (describeSecret sc)
-            STOTP -> do
-              p <- totp sc
-              printf "(%d) %s: %s\n" i (describeSecret sc) p
-              return ms
-  printf "Searched %d total entries.\n" (n - 1)
-  unless (getAny found) $ case filts of
-    Left i -> printf "ID %d not found!\n" i *> exitFailure
-    Right _ -> putStrLn "No matches found!"
+      val <- case m of
+        STOTP | not l -> Just <$> liftIO (totp sc)
+        _ -> pure Nothing
+      lift . lift . tell . (: []) $
+        ViewOut
+          { voId = i,
+            voAccount = secAccount sc,
+            voIssuer = secIssuer sc,
+            voValue = val,
+            voMode = fromSMode m
+          }
+      return ms
+  if j
+    then
+      T.putStrLn . T.decodeUtf8 . BSL.toStrict . J.encodingToLazyByteString $
+        J.pairs
+          ( "total" J..= n
+              <> "values" J..= res
+          )
+    else do
+      printf "Searched %d total entries.\n" (n - 1)
+      forM_ res $ \ViewOut {..} ->
+        let described = voAccount <> case voIssuer of
+                          Nothing -> ""
+                          Just i -> " / " <> i
+         in case voMode of
+              HOTP -> printf "(%d) %s: [ counter-based, use gen ]\n" voId described
+              TOTP -> printf "(%d) %s%s\n" voId described $ case voValue of
+                Nothing -> ""
+                Just v -> ": " <> v
+      when (null res) $ case filts of
+        Left i -> printf "ID %d not found!\n" i *> exitFailure
+        Right _ -> putStrLn "No matches found!"
 
 -- | Add a secret, interactively.
 addSecret ::
