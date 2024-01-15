@@ -118,15 +118,16 @@ viewVault l j filts vt = do
     then
       T.putStrLn . T.decodeUtf8 . BSL.toStrict . J.encodingToLazyByteString $
         J.pairs
-          ( "total" J..= n
+          ( "total" J..= (n - 1)
               <> "values" J..= res
           )
     else do
       printf "Searched %d total entries.\n" (n - 1)
       forM_ res $ \ViewOut {..} ->
-        let described = voAccount <> case voIssuer of
-                          Nothing -> ""
-                          Just i -> " / " <> i
+        let described =
+              voAccount <> case voIssuer of
+                Nothing -> ""
+                Just i -> " / " <> i
          in case voMode of
               HOTP -> printf "(%d) %s: [ counter-based, use gen ]\n" voId described
               TOTP -> printf "(%d) %s%s\n" voId described $ case voValue of

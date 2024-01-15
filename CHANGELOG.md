@@ -1,3 +1,12 @@
+Version 0.1.2.1
+================
+
+*January 15, 2024*
+
+<https://github.com/mstksg/uncertain/releases/tag/v0.1.2.1>
+
+*   Json output for view command incorrectly counted number of items.
+
 Version 0.1.2.0
 ================
 
