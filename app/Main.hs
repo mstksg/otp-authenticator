@@ -50,7 +50,7 @@ main = G.withCtx "~/.gnupg" "C" G.OpenPGP $ \ctx -> do
         else throwIO e
 
     e' <- case cmd of
-      View l filts -> (Nothing <$) . viewVault l filts =<< getEnc ctx e
+      View l j filts -> (Nothing <$) . viewVault l j filts =<< getEnc ctx e
       Add u -> case k of
         Nothing -> do
           putStrLn "Adding a key requires a fingerprint."

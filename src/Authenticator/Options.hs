@@ -28,6 +28,7 @@ import           Control.Monad
 import           Data.Functor
 import           Data.Maybe
 import           Data.Monoid
+import System.IO
 import           Data.String
 import           GHC.Generics               (Generic)
 import           Options.Applicative hiding (str)
@@ -51,7 +52,7 @@ data DumpType = DTYaml | DTJSON
 
 -- | A command to exercute.  See "Authenticator.Actions".
 data Cmd = Add Bool
-         | View Bool (Either Int (Maybe T.Text, Maybe T.Text))
+         | View Bool Bool (Either Int (Maybe T.Text, Maybe T.Text))
          | Gen Int
          | Edit Int
          | Delete Int
@@ -141,6 +142,10 @@ parseOpts = Opts <$> optional (
                                <> short 'l'
                                <> help "Only list accounts; do not generate any keys."
                                 )
+                     <*> switch ( long "json"
+                               <> short 'j'
+                               <> help "Output as json."
+                                )
                      <*> (Left <$> argument auto ( metavar "ID"
                                                    <> help "Specific ID number of account"
                                                  )
@@ -193,8 +198,8 @@ getOptions = do
           else throwIO e
       case c0 of
         Left e -> do
-          putStrLn "Could not parse configuration file.  Ignoring."
-          putStrLn . Y.prettyPrintParseException $ e
+          hPutStrLn stderr "Could not parse configuration file.  Ignoring."
+          hPutStrLn stderr . Y.prettyPrintParseException $ e
           return (Conf Nothing Nothing, False)
         Right c1 -> return (c1, mkNew)
 

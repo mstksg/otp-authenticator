@@ -57,10 +57,11 @@ import qualified System.Console.Haskeline   as L
 -- | View secrets, generating codes for time-based keys.
 viewVault
     :: Bool                                     -- ^ List key names only; do not generate any codes.
+    -> Bool                                     -- ^ json output
     -> Either Int (Maybe T.Text, Maybe T.Text)  -- ^ Filter by ID or possibly by account name and issuer
     -> Vault
     -> IO ()
-viewVault l filts vt = do
+viewVault l j filts vt = do
     (n,found) <- runWriterT . (`execStateT` 1) $ (`vaultSecrets` vt) $ \m sc ms -> do
         i <- state $ \x -> (x :: Int, x + 1)
         fmap (fromMaybe ms) . runMaybeT $ do

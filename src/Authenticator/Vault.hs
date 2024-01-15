@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
@@ -5,13 +6,13 @@
 {-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE PatternSynonyms     #-}
+{-# LANGUAGE PolyKinds           #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE TypeInType          #-}
 {-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE ViewPatterns        #-}
 
@@ -305,8 +306,9 @@ hotp Sec{..} (HOTPState i) =
 totp_ :: Secret 'TOTP -> POSIXTime -> T.Text
 totp_ Sec{..} t = withSome (hashAlgo secAlgo) $ \case
     Dict a ->
-      let Right tparam =
-            OTP.mkTOTPParams a 0 30 (otpDigits secDigits) OTP.TwoSteps
+      let tparam = case OTP.mkTOTPParams a 0 30 (otpDigits secDigits) OTP.TwoSteps of
+            Left e -> error $ "totp_: " <> e
+            Right x -> x
       in  formatKey 3 . T.pack $
             printf fmt $
               OTP.totp tparam secKey (round t)
