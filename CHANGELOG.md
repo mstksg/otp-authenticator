@@ -1,3 +1,12 @@
+Version 0.1.2.0
+================
+
+*January 15, 2024*
+
+<https://github.com/mstksg/uncertain/releases/tag/v0.1.2.0>
+
+*   Json output for view command
+
 Version 0.1.1.0
 ================
 
